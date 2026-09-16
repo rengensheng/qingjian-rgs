@@ -102,7 +102,14 @@ impl Router {
                 self.engine.clear();
                 Effect::Changed(None)
             }
-            codes::RETURN => Effect::Changed(Some(self.engine.take_raw())),
+            codes::RETURN => {
+                // 回车：动过高亮就是在选词，上屏高亮候选；没动过还是原样上屏（与 macOS 一致）
+                Effect::Changed(Some(if self.navigated {
+                    self.commit_highlighted()
+                } else {
+                    self.engine.take_raw()
+                }))
+            }
             codes::TAB if self.engine.english_mode() => {
                 Effect::Changed(Some(self.commit_highlighted()))
             }

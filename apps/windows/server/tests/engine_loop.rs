@@ -515,6 +515,32 @@ fn app_list_is_looked_up_per_session() {
 }
 
 #[test]
+fn return_commits_highlighted_after_navigation() {
+    // 没动过高亮：回车原样上屏拼音。
+    let mut plain = router();
+    let (_, _, frame) = type_letters(&mut plain, "ni");
+    assert!(frame.candidates.items.len() > 1);
+    let (outcome, commit, after) = press(&mut plain, function_key(0x0D));
+    assert_eq!(
+        (outcome, commit.as_deref()),
+        (KeyOutcome::Consumed, Some("ni"))
+    );
+    assert!(after.is_empty());
+
+    // 方向键动过高亮：回车上屏高亮候选，不再是拼音。
+    let mut moved = router();
+    let (_, _, frame) = type_letters(&mut moved, "ni");
+    let second = frame.candidates.items[1].text.clone();
+    let (outcome, _, _) = press(&mut moved, KeyEvent::new(0x28, None, Default::default()));
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    let (outcome, commit, _) = press(&mut moved, function_key(0x0D));
+    assert_eq!(
+        (outcome, commit.as_deref()),
+        (KeyOutcome::Consumed, Some(second.as_str()))
+    );
+}
+
+#[test]
 fn english_tab_and_navigated_space_pick_candidates() {
     let mut router = router();
     let (_, _, frame) = type_english(&mut router, "hel");

@@ -670,7 +670,12 @@ impl QingjianInputController {
             // 方向键等其他键还原后交给应用
             return selector == sel!(insertNewline:);
         } else if selector == sel!(insertNewline:) {
-            host::commit_raw(client);
+            // 回车：动过高亮就是在选词，上屏高亮候选；没动过还是原样上屏（英文模式同理）
+            if host::with(|h| h.session.navigated).unwrap_or(false) {
+                host::commit_highlighted(client);
+            } else {
+                host::commit_raw(client);
+            }
         } else if selector == sel!(cancelOperation:) || selector == sel!(complete:) {
             // TextEdit 等应用把 Esc 绑成 complete:（自动补全），也当作取消
             host::with(|h| {
