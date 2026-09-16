@@ -146,6 +146,9 @@ impl TextService_Impl {
         if !self.ensure_connected() {
             return !event.modifiers.has_command_key();
         }
+        // OnTestKeyDown 已声明吃的可打印字符，Server 放行时由输入法自己插入：退回应用的话，企业微信 /
+        // 微信 / notepad++ 这类自绘输入框会把它丢掉。功能键（无字符）仍交给应用。
+        let passthrough_char = event.character.filter(|c| !c.is_control());
         if let Ok(context) = pic.ok() {
             self.shared.set_last_context(Some(context.clone()));
         }
@@ -199,23 +202,45 @@ impl TextService_Impl {
                 }
             }
         };
-        match next {
-            // 放行的键 Server 没动缓冲区，不碰文档（应用处理这个键时光标可能会移）。
-            Next::Document {
-                consumed: false, ..
-            } => false,
-            Next::Document {
-                commit, preedit, ..
-            } => {
+        // 带 Ctrl / Alt / Win 的组合（翻译保留键）放行时仍交还应用，别把热键的字母插进文档。
+        let insertable = !event.modifiers.has_command_key();
+        match (next, passthrough_char) {
+            // 放行 + 没在组句 + 可打印字符：输入法插入，吃掉；Server 顺带交出的英文直输段字母拼在前面。
+            (
+                Next::Document {
+                    consumed: false,
+                    commit,
+                    preedit,
+                },
+                Some(c),
+            ) if insertable && preedit.is_empty() => {
+                let mut text = commit.unwrap_or_default();
+                text.push(c);
+                self.update_document(pic, Some(text), String::new());
+                true
+            }
+            // 放行的功能键：Server 没动缓冲区，交还应用（应用处理这个键时光标可能会移）。
+            (
+                Next::Document {
+                    consumed: false, ..
+                },
+                _,
+            ) => false,
+            (
+                Next::Document {
+                    commit, preedit, ..
+                },
+                _,
+            ) => {
                 self.update_document(pic, commit, preedit);
                 true
             }
             // 读选区是异步的：先吃掉这个键，选区文本在回调里发给 Server。
-            Next::ReadSelection { request } => {
+            (Next::ReadSelection { request }, _) => {
                 self.read_selection(pic, request);
                 true
             }
-            Next::Abort => false,
+            (Next::Abort, _) => false,
         }
     }
 }

@@ -86,7 +86,7 @@ pub fn assemble(spec: &AssemblySpec) -> Result<Engine, ServerError> {
 }
 
 /// 用户导入词库目录 `dicts/`，不存在则创建；建不了当没有。
-fn user_dicts_dir(user_dir: Option<&Path>) -> Option<std::path::PathBuf> {
+pub(crate) fn user_dicts_dir(user_dir: Option<&Path>) -> Option<std::path::PathBuf> {
     let dir = user_dir?.join("dicts");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)

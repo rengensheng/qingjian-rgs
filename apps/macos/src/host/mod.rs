@@ -41,9 +41,9 @@ use qingjian_learning::{FrequencyLearner, InputLog, UsageStats, VocabularyBook};
 use qingjian_lm::BigramModel;
 use qingjian_platform::extra_dictionaries;
 use qingjian_platform::{
-    AppsConfig, DEFAULT_ENGLISH_CANDIDATES_OFF, DictionariesConfig, KeyCombo, LayoutMode,
-    LocalModelConfig, LogLevel, Modifiers, PAGE_KEY_OPTIONS, PreeditMode, ShortcutConfig,
-    ThemeMode,
+    AppsConfig, CandidateRenderer, DEFAULT_ENGLISH_CANDIDATES_OFF, DictionariesConfig, KeyCombo,
+    LayoutMode, LocalModelConfig, LogLevel, Modifiers, PAGE_KEY_OPTIONS, PreeditMode,
+    ShortcutConfig, ThemeMode,
 };
 use qingjian_predict::{
     CloudGlossFiller, CloudPredictor, ConnectionTest, PredictConfig, PredictError,

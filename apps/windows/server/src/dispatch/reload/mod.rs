@@ -15,6 +15,7 @@ pub(super) use self::state::ConfigReload;
 /// 看配置文件 mtime 的最短间隔；工人循环空闲时按它等，重排的短节拍来得更勤时按这个节流。
 pub(super) const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(1);
 use super::{Router, RouterConfig};
+use crate::assembly::user_dicts_dir;
 
 fn mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path)
@@ -107,7 +108,12 @@ impl Router {
         self.engine.set_shuangpin(config.general.shuangpin());
         self.engine.set_zhuyin_mode(config.general.zhuyin);
         self.engine.set_mode_keys(config.shortcut.mode);
+        let previous = self.config.render_settings();
         self.config = RouterConfig::from(config);
+        let settings = self.config.render_settings();
+        if settings != previous {
+            self.candidates.configure(settings);
+        }
         self.reconcile_status();
         self.apply_model_config(&config.model);
 
@@ -119,9 +125,10 @@ impl Router {
             reload.applied_predict = config.predict.clone();
         }
         if config.dictionaries != reload.applied_dictionaries {
+            // 别传用户目录本身：那里的学习数据 .tsv 会被当词库装。
             let dicts = extra_dictionaries::load(
                 reload.bundled_dicts_dir.as_deref(),
-                reload.user_dir.as_deref(),
+                user_dicts_dir(reload.user_dir.as_deref()).as_deref(),
                 &config.dictionaries,
             );
             tracing::info!(count = dicts.len(), "附加词库已热重装");
