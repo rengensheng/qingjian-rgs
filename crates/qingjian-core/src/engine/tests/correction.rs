@@ -215,6 +215,31 @@ fn spelling_correction_fixes_one_edit_and_learns_from_enter() {
     assert!(engine.query().unwrap().correction.is_none());
 }
 
+/// 跨音节的相邻换位（`niaho` → `nihao`）：换位后切分照样成立，拼音看着合法，
+/// 音节级敲错边按敲错的切分展开够不着，整段换位纠正；敲对的原样不误纠。
+#[test]
+fn transposition_across_syllable_boundary_corrects_valid_looking_pinyin() {
+    let dictionary = Dictionary::parse(
+        "你好\tni hao\t9000\n你\tni\t90000\n好\thao\t80000\n啊\ta\t60000\n后\thou\t5000\n\
+         明天\tming tian\t9000\n明\tming\t80000\n天\ttian\t70000\n题\tti\t60000\n那\tna\t50000\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(dictionary);
+    engine.set_input("niaho");
+    let query = engine.query().unwrap();
+    assert_eq!(query.correction.as_ref().unwrap().corrected, "nihao");
+    assert_eq!(query.candidates.items[0].text, "你好");
+    engine.set_input("mingtina");
+    let query = engine.query().unwrap();
+    assert_eq!(query.correction.as_ref().unwrap().corrected, "mingtian");
+    assert_eq!(query.candidates.items[0].text, "明天");
+    // 敲对的不误纠
+    engine.set_input("nihao");
+    assert!(engine.query().unwrap().correction.is_none());
+    engine.set_input("mingtian");
+    assert!(engine.query().unwrap().correction.is_none());
+}
+
 #[test]
 fn fuzzy_rules_add_homophones_behind_exact_hits() {
     // 词库里只有 kai fa 系列加一个 哈；敲 kaiha 没开 f/h 时只有前缀词 开（开哈 原样读得通，词图的敲错边翻不过它），

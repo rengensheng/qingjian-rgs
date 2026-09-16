@@ -127,14 +127,11 @@ impl Engine {
                 });
             }
         };
-        // 拼音「不像话」时试拼写纠错；纠正生效则按纠正后的切分查词，原串只用来记学习与显示
+        // 拼音「不像话」时试全部一处编辑的拼写纠错，看似合法时也试相邻换位（跨音节换位切分照样成立）；
+        // 纠正生效则按纠正后的切分查词，原串只用来记学习与显示。原样说得通时噪声信道会判原样赢。
         let unlikely = correction::unlikely_pinyin(segmentations.first(), tail)
             || correction::trailing_single_letter(segmentations.first());
-        let correction = if unlikely {
-            self.active_correction(scope)
-        } else {
-            None
-        };
+        let correction = self.active_correction(scope);
         let (segmentations, tail): (Vec<Segmentation>, &str) = match &correction {
             Some(c) => (vec![c.segmentation.clone()], ""),
             None => (segmentations, tail),

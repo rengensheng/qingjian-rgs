@@ -33,13 +33,14 @@ impl Engine {
             return None;
         }
         let (segmentations, tail) = segment_longest_prefix(scope).ok()?;
-        // 不像话的拼音试全部一处编辑；末尾单字母的只试相邻换位（`mingtain` → `mingtian`），其余合法拼音不碰
+        // 不像话的拼音试全部一处编辑；末尾单字母的只试相邻换位（`mingtain` → `mingtian`）；
+        // 看似合法的也试相邻换位：跨音节的换位（`niaho` → `nihao`）切分照样成立，
+        // 音节级敲错边按敲错的切分展开够不着，只能整段换回来比噪声信道。
+        // 原样说得通时噪声信道会判原样赢，不会误纠。
         let candidates = if correction::unlikely_pinyin(segmentations.first(), tail) {
             correction::candidates(scope)
-        } else if correction::trailing_single_letter(segmentations.first()) {
-            correction::transposition_candidates(scope)
         } else {
-            return None;
+            correction::transposition_candidates(scope)
         };
         // 噪声信道：原串按原样能转出的整句得分 vs 纠正后的整句得分扣掉一次编辑的代价，后者高才纠。
         // 原串切不干净（有尾巴）就没有原样得分，任何能转出整句的纠正都胜出
