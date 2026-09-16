@@ -101,7 +101,7 @@ pub struct Engine {
     /// 英文词表，中英混输用；没有就不出英文候选。
     english: Option<WordList>,
 
-    /// 英文模式（壳里 Caps Lock 亮着）：缓冲区里的字母不当拼音，候选来自英文词表的补全与纠正。
+    /// 英文模式（壳按自己的切换键决定，macOS 与 Windows 都是单击 Shift）：缓冲区里的字母不当拼音，候选来自英文词表的补全与纠正。
     english_mode: bool,
 
     /// 全角标点与引号配对状态。

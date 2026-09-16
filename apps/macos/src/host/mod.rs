@@ -13,10 +13,12 @@ mod diagnostics;
 mod dictionaries;
 mod dictionary_info;
 mod init;
+mod mode;
 mod model;
 mod notice;
 mod predict_monitor;
 mod presenting;
+mod refresh;
 mod rescore_monitor;
 mod session;
 mod settings;
@@ -26,6 +28,8 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 
 use objc2::MainThreadMarker;
+use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use objc2_foundation::{NSProcessInfo, NSRect, NSString};
 use qingjian_core::{
@@ -58,6 +62,10 @@ use config_watch::ConfigWatch;
 pub use dictionary_info::DictionaryInfo;
 pub use init::init;
 use predict_monitor::PredictMonitor;
+pub use refresh::{
+    accept_sentence, commit_clicked, commit_highlighted, commit_index, commit_raw, move_highlight,
+    refresh, render, turn_page,
+};
 use rescore_monitor::RescoreMonitor;
 pub use session::Session;
 pub use translation_job::TranslationJob;
@@ -144,6 +152,12 @@ pub struct Host {
     /// 英文模式是否给英文候选（配置 `[general] english_candidates`）。
     pub english_candidates: bool,
 
+    /// 单击 Shift 切出来的持久中英模式。Caps Lock 不再切换模式，只管字母大小写（与 Windows 一致）。
+    pub english: bool,
+
+    /// 单击 Shift 的判定：按下到抬起之间没插进别的键才切换，按住 Shift 打字不算。
+    pub shift_tap: crate::imk::ShiftTap,
+
     /// 按应用的行为（配置 `[apps]`）：哪些应用里英文模式不给候选。
     pub apps: AppsConfig,
 
@@ -171,6 +185,10 @@ pub struct Host {
 
     /// 当前会话的候选、高亮、页码、preedit。
     pub session: Session,
+
+    /// 当前会话的客户端：候选窗是进程级的，鼠标点选时靠它把词送进应用。切会话时更新，停用时清空；
+    /// retain 住不会悬空，只在候选窗可见（必有组句、会话必活着）时用。
+    pub active_client: Option<Retained<AnyObject>>,
 
     /// 组句中到达的整句补全，Tab 接受。
     pub sentence: Option<String>,

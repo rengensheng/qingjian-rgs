@@ -336,15 +336,16 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   应用给不出光标矩形时以鼠标位置为准。
 - `apps/macos/src` 按职责分目录，模块文件只做 `mod` 声明与 re-export：
   `main.rs` 初始化 host、建 IMKServer 并跑 NSApplication；
-  `host/` 是进程级单例（一个 Engine + 一个候选窗口，`thread_local`，IMK 回调全在主线程；`mod.rs` 放结构体与 `with`，`init.rs` 启动加载、`config.rs` 热加载、`settings.rs` 菜单 / 偏好设置动作、`dictionaries.rs` 词库管理、`cloud.rs` 云端、`diagnostics.rs` 诊断与日志、`presenting.rs` 呈现），
+  `host/` 是进程级单例（一个 Engine + 一个候选窗口，`thread_local`，IMK 回调全在主线程；`mod.rs` 放结构体与 `with`，`init.rs` 启动加载、`config.rs` 热加载、`settings.rs` 菜单 / 偏好设置动作、`dictionaries.rs` 词库管理、`cloud.rs` 云端、`diagnostics.rs` 诊断与日志、`presenting.rs` 呈现、`refresh.rs` 上屏与刷新（键盘与鼠标点选共用）、`mode.rs` 中英模式），
   `host/` 下是会话状态 `session.rs`、联想轮询定时器 `predict_monitor.rs`、配置文件监视与定时落盘 `config_watch.rs`、
   短提示 `notice.rs`、翻译选中文字的任务 `translation_job.rs`、附加词库装配 `extra_dictionaries.rs` / `dictionary_info.rs`；
   `imk/`：`controller.rs` 用 `define_class!` 继承 `IMKInputController`（类名 `QingjianInputController`，
   与 Info.plist 的 `InputMethodServerControllerClass` 一致），只做按键 → Engine、Engine → 窗口；
   `client.rs` 用 `msg_send!` 封装 IMKTextInput（`setMarkedText:` / `insertText:` /
   `attributesForCharacterIndex:lineHeightRectangle:` 取光标矩形）；`modifiers.rs` / `secure_input.rs` 查系统状态；
-  `candidates/`：`window.rs` 是非激活浮动 NSPanel（level 101、CanJoinAllSpaces、忽略鼠标），
-  `view.rs` 自绘顶部拼音行与候选（竖排 / 横排两套画法），`theme.rs` 集中字体颜色间距，`row.rs` 把 Candidate 转成展示片段，
+  `candidates/`：`window.rs` 是非激活浮动 NSPanel（level 101、CanJoinAllSpaces；收鼠标做点选，不抢焦点），
+  `view.rs` 自绘顶部拼音行与候选（竖排 / 横排两套画法）并处理 `mouseDown:`（按行命中上屏那一格，`host::commit_clicked`；
+  上屏要用的客户端是 Host 里 retain 住的当前会话对象），`theme.rs` 集中字体颜色间距，`row.rs` 把 Candidate 转成展示片段，
   `preedit/`（`mod.rs` / `segment.rs` / `style.rs`）是拼音行的分段模型（由 Core 的 `MarkedSegment` 转来），`frame.rs` 是一帧的数据；
   `menubar/`：`indicator.rs` 是菜单栏的中 / 英 NSStatusItem（输入源图标没法动态换，只能自己放一个），
   `menu.rs` / `action.rs` / `target.rs` 是输入法菜单；
@@ -393,7 +394,9 @@ CC-CEDICT 表（`dict-convert cedict`）保留为备用来源，覆盖面广但�
   失焦 / 停用时 DLL 发 `Commit`，Server 回 `Committed { text }`（缓冲区原样交出，对应 macOS 的 `commitComposition`），
   DLL 用最近收键记下的 `ITfContext` 经编辑会话落进文档；应用强行终止组句（`OnCompositionTerminated`）时拼音已被框架定成普通文本，
   DLL 只记「Server 缓冲过期」，下次说话前先 `Commit` 并丢掉交出的文本，不再插一次。
-  中英模式：**Windows 与 macOS 机制不同**。macOS 用 Caps Lock 当中英切换键；Windows 按本地习惯，单击 Shift 在中 / 英间翻转。
+  中英模式：两个平台都是单击 Shift 翻转持久模式，Caps Lock 只管大小写。macOS 的单击判定在 `handleEvent:` 的
+  `FlagsChanged` 里（`apps/macos/src/imk/shift.rs`，左右 Shift 键码 56 / 60：按下记、期间任何 `KeyDown` 清掉、抬起时还立着就是单击）；
+  Windows 按本地习惯走击键 sink（下文）。
   单击 Shift 的判定在**击键 sink** 里（`com/key/shift.rs`，喂 `OnTestKeyDown` / `OnTestKeyUp`：按下 Shift 到抬起之间没有别的键插进来就是一次单击；
   微软 SampleIME 的 `OnTestKeyDown` 同样处理 VK_SHIFT，sink 收得到独立修饰键）。之前用线程级 `WH_KEYBOARD` 钩子判定，但钩子**看不到被 TSF 吃掉的键**
   （msctf 在队列层把它们改成 WM_NULL），Shift + 数字（删候选 / 第二译词）会被误判成单击而切换模式，2026-09-11 真机确认 sink 收得到 Shift 后钩子已删。

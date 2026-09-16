@@ -1,7 +1,8 @@
 //! 菜单栏里的「中 / 英」状态项。
 //!
 //! 输入源图标（Info.plist 的 tsInputMethodIconFileKey）没法动态换，所以自己放一个 NSStatusItem。
-//! Caps Lock 的变化不会作为按键送到输入法，用一个定时器轮询系统状态刷新。
+//! 模式是单击 Shift 切出来的软件状态（见 [`crate::host::Host::english`]），切换时直接刷新标题；
+//! 定时器只做兜底（云朵标识变化、极端情况下的状态对齐）。
 //!
 //! 状态项一旦创建就**不再隐藏**：`setVisible(false)` 再 `setVisible(true)` 会把它重新排到菜单栏最左边，用户 ⌘ 拖到输入法图标旁的位置就丢了
 //! （固定 autosave 名也保不住），而焦点每进出一次输入框 IMK 就 deactivate / activate 一轮。
@@ -14,9 +15,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{NSMenu, NSStatusBar, NSStatusItem, NSVariableStatusItemLength};
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString, NSTimer, ns_string};
 
-use crate::imk::modifiers;
-
-/// 轮询 Caps Lock 状态的间隔。
+/// 刷新状态项的兜底间隔。
 const POLL_INTERVAL: f64 = 0.25;
 
 /// 停用后隔多久才把状态项收起：焦点在输入框之间挪动时 deactivate 与下一次 activate 只隔几十毫秒。
@@ -61,7 +60,7 @@ impl ModeIndicator {
     }
 
     /// 输入法激活：展开状态项并开始轮询；停用时安排的收起取消。
-    pub fn activate(&mut self) {
+    pub fn activate(&mut self, english: bool) {
         if let Some(timer) = self.collapse_timer.take() {
             timer.invalidate();
         }
@@ -70,7 +69,7 @@ impl ModeIndicator {
             self.item.setLength(NSVariableStatusItemLength);
         }
         self.english = None;
-        self.update();
+        self.update(english);
         if self.timer.is_none() {
             let target = ModeMonitor::new(self.mtm);
             let timer = unsafe {
@@ -131,12 +130,11 @@ impl ModeIndicator {
         self.english = None;
     }
 
-    /// 按当前 Caps Lock 状态刷新标题；收起时不动。
-    pub fn update(&mut self) {
+    /// 按中英模式刷新标题；收起时不动。模式变化时调用方主动调，定时器只做兜底。
+    pub fn update(&mut self, english: bool) {
         if !self.shown {
             return;
         }
-        let english = modifiers::caps_lock_on();
         if self.english == Some(english) {
             return;
         }
@@ -163,7 +161,10 @@ define_class!(
     impl ModeMonitor {
         #[unsafe(method(tick:))]
         fn tick(&self, _timer: Option<&AnyObject>) {
-            crate::host::with(|h| h.indicator.update());
+            crate::host::with(|h| {
+                let english = h.english;
+                h.indicator.update(english);
+            });
         }
 
         #[unsafe(method(collapse:))]

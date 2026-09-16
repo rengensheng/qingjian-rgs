@@ -399,6 +399,36 @@ fn page_keys_follow_config() {
 }
 
 #[test]
+fn dash_equal_page_keys_turn_pages_instead_of_raw_segments() {
+    // 翻页键改成 `-` `=`：连字符不再进英文直输段，改翻页。
+    let mut router = router_with(RouterConfig {
+        page_size: 1,
+        page_keys: ('-', '='),
+        ..RouterConfig::default()
+    });
+    let (_, _, frame) = type_letters(&mut router, "ni");
+    assert!(frame.page_count > 1, "样例词库里 ni 应不止一个候选");
+    assert_eq!(frame.page, 0);
+
+    let key = |router: &mut Router, c| {
+        key_result(router.handle(ClientMessage::Key {
+            session: SESSION,
+            event: punct(c),
+        }))
+    };
+    let (outcome, commit, frame) = key(&mut router, '=');
+    assert_eq!((outcome, commit), (KeyOutcome::Consumed, None));
+    assert_eq!(frame.page, 1, "`=` 应翻到下一页");
+    let (_, _, frame) = key(&mut router, '-');
+    assert_eq!(frame.page, 0, "`-` 应翻回上一页");
+    assert!(
+        !preedit(&frame).contains('-'),
+        "`-` 不应进直输段：{}",
+        preedit(&frame)
+    );
+}
+
+#[test]
 fn english_mode_gives_candidates_and_space_commits_raw() {
     let mut router = router();
     let (outcome, commit, frame) = type_english(&mut router, "hel");

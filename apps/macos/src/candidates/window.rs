@@ -160,7 +160,8 @@ impl CandidateWindow {
     }
 }
 
-/// 建一块面板并把内容视图装进去：无边框、不抢焦点、透明背景带阴影、不吃鼠标。
+/// 建一块面板并把内容视图装进去：无边框、不抢焦点、透明背景带阴影。
+/// 鼠标事件要收：点选候选（`CandidateView::mouse_down` 按行命中上屏）；面板本身不抢焦点，点完继续打字。
 fn build_panel(mtm: MainThreadMarker, view: &CandidateView) -> Retained<NSPanel> {
     let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
         mtm.alloc::<NSPanel>(),
@@ -173,7 +174,7 @@ fn build_panel(mtm: MainThreadMarker, view: &CandidateView) -> Retained<NSPanel>
     panel.setBackgroundColor(Some(&NSColor::clearColor()));
     panel.setHasShadow(true);
     panel.setBecomesKeyOnlyIfNeeded(true);
-    panel.setIgnoresMouseEvents(true);
+    panel.setIgnoresMouseEvents(false);
     // NSPanel 缺省在应用失活时自动隐藏；输入法进程从来不是前台应用，不能靠这个
     panel.setHidesOnDeactivate(false);
     panel.setCollectionBehavior(collection_behavior());

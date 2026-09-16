@@ -75,7 +75,7 @@ impl Host {
         }
         let cloud_active = self.engine.prediction_enabled();
         self.indicator.set_cloud(cloud_active);
-        self.indicator.update();
+        self.indicator.update(self.english);
         self.menu.sync(&config, cloud_active, self.settings.error());
         let key_present = config
             .predict

@@ -118,7 +118,7 @@ if [[ -f data/generated/dict.tsv || -f data/generated/dict.qj ]]; then
 fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# 图标：从 assets/icon/logo.png 生成 .icns（应用图标）与多分辨率 tiff（输入法菜单图标）
+# 图标：应用图标用彩色 logo.png 生成 .icns；输入法菜单图标用白色版 logo-menu.png（16pt 双分辨率 tiff）
 ICONSET="$ROOT/target/Qingjian.iconset"
 rm -rf "$ICONSET" && mkdir -p "$ICONSET"
 for size in 16 32 128 256 512; do
@@ -127,7 +127,11 @@ for size in 16 32 128 256 512; do
   sips -z $double $double assets/icon/logo.png --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Qingjian.icns"
-tiffutil -cathidpicheck "$ICONSET/icon_16x16.png" "$ICONSET/icon_16x16@2x.png" \
+MENU_DIR="$ROOT/target/QingjianMenu"
+rm -rf "$MENU_DIR" && mkdir -p "$MENU_DIR"
+sips -z 16 16 assets/icon/logo-menu.png --out "$MENU_DIR/menu_16x16.png" >/dev/null
+sips -z 32 32 assets/icon/logo-menu.png --out "$MENU_DIR/menu_16x16@2x.png" >/dev/null
+tiffutil -cathidpicheck "$MENU_DIR/menu_16x16.png" "$MENU_DIR/menu_16x16@2x.png" \
   -out "$APP/Contents/Resources/qingjian-menu.tiff" >/dev/null
 # 仓库放在 iCloud 同步的目录（Documents）时新建的 .app 会带上 Finder 扩展属性，codesign 会拒（detritus not allowed）：签名前清掉
 xattr -cr "$APP"

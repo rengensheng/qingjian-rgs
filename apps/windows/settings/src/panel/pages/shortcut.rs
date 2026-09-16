@@ -8,7 +8,11 @@ use crate::panel::controls::{field, index_of, page};
 use crate::panel::{Message, Settings};
 
 /// 翻页键对：界面名 + 配置写法。
-pub(crate) const PAGE_KEYS: [(&str, &str); 2] = [("方括号 [ ]", "[]"), ("逗号句号 , .", ",.")];
+pub(crate) const PAGE_KEYS: [(&str, &str); 3] = [
+    ("方括号 [ ]", "[]"),
+    ("逗号句号 , .", ",."),
+    ("减号等号 - =", "-="),
+];
 
 /// 可当模式键的字母（与 Core `ModeKeys::CANDIDATES` 一致）。
 pub(crate) const MODE_KEYS: [&str; 3] = ["v", "u", "i"];

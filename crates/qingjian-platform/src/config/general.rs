@@ -6,10 +6,11 @@ use super::{LayoutMode, LogLevel, PreeditMode, ThemeMode};
 /// 每页最多几个候选：数字键只有 1–9。
 pub const MAX_PAGE_SIZE: usize = 9;
 
-/// 翻页键对的可选值，第一项是缺省：第一个键向前、第二个向后。`-` `=` 不在其中，`-` 已经是英文直输段的入口。
+/// 翻页键对的可选值，第一项是缺省：第一个键向前、第二个向后。`-=` 也可以选，但 `-` 当翻页键时不再是英文直输段的入口
+///（`no-way` 这类带连字符的输入打不出来），`=` 在算式里也不再是上屏（`v1+2=` 只翻页）；两个平台行为一致。
 /// 缺省不用 `,` `.`：组句中敲逗号句号应该把首选上屏再补一个全角标点（`nihao,zaima` 一气打完），
 /// 拿它们翻页就得先按空格再敲标点。
-pub const PAGE_KEY_OPTIONS: [&str; 2] = ["[]", ",."];
+pub const PAGE_KEY_OPTIONS: [&str; 3] = ["[]", ",.", "-="];
 
 /// 缺省翻页键对，与 [`PAGE_KEY_OPTIONS`] 第一项一致。
 pub const DEFAULT_PAGE_KEYS: (char, char) = ('[', ']');
@@ -36,7 +37,7 @@ pub struct GeneralConfig {
     /// 组句中的拼音显示在行内、候选窗口还是两处都显示。
     pub preedit: PreeditMode,
 
-    /// 英文模式（Caps Lock 亮着）是否给英文候选（补全与拼错纠正）。关掉就是纯直通。
+    /// 英文模式（单击 Shift 切换）是否给英文候选（补全与拼错纠正）。关掉就是纯直通。
     pub english_candidates: bool,
 
     /// 中文模式下不在组句时敲的标点转成全角（`，。？！` 等，数字后的 `.` 保持半角）。
@@ -138,6 +139,8 @@ mod tests {
         assert_eq!(general.page_keys(), ('[', ']'));
         general.page_keys = ",,".to_owned();
         assert_eq!(general.page_keys(), ('[', ']'));
+        general.page_keys = "-=".to_owned();
+        assert_eq!(general.page_keys(), ('-', '='));
     }
 
     #[test]

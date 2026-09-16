@@ -58,6 +58,9 @@ impl Host {
                     self.apply_config(false);
                 }
             }
+            MenuAction::ToggleEnglish => {
+                self.set_english(!self.english);
+            }
             MenuAction::ToggleFuzzy(index) => {
                 let name = FuzzyRules::NAMES[index];
                 let on = !self.settings.config().fuzzy.is_on(name);

@@ -58,7 +58,7 @@ impl ShortcutsPage {
         note(
             layout,
             mtm,
-            "选「，  。」时组句中敲逗号句号是翻页，不再是上屏加标点。",
+            "选「，  。」时组句中敲逗号句号是翻页，不再是上屏加标点；选「-  =」时连字符不再是英文直输段的入口（no-way 这类打不出来）。",
         );
         let key_titles: Vec<String> = ModeKeys::CANDIDATES.iter().map(char::to_string).collect();
         let expression = row_popup(

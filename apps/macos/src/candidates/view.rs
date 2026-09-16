@@ -6,7 +6,7 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAttributedStringNSStringDrawing, NSBezierPath, NSColor, NSFont, NSFontAttributeName,
+    NSAttributedStringNSStringDrawing, NSBezierPath, NSColor, NSEvent, NSFont, NSFontAttributeName,
     NSForegroundColorAttributeName, NSStrikethroughStyleAttributeName, NSView,
 };
 use objc2_foundation::{
@@ -16,10 +16,12 @@ use qingjian_platform::LayoutMode;
 
 use super::cloud_icon::CloudIcon;
 use super::frame::Frame;
+use super::hit::{horizontal_item, vertical_row};
 use super::preedit::Preedit;
 use super::preedit::PreeditStyle;
 use super::row::{Row, Tone};
 use super::theme::Theme;
+use crate::imk::{TextClient, catch_panic, recover_from_panic};
 
 /// 视图状态。
 pub struct Ivars {
@@ -91,6 +93,31 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
             self.draw();
+        }
+
+        /// 点选候选：落在第几行就上屏那一格，拼音行 / 页码 / 空白处不管；翻译评审中不管。
+        /// 面板不抢焦点（点完继续打字），点击只管选词。
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            let point = self.convertPoint_fromView(event.locationInWindow(), None);
+            if let Some(offset) = self.row_at_point(point) {
+                let client = crate::host::with(|h| {
+                    if h.translation.is_some() {
+                        None
+                    } else {
+                        h.active_client.clone()
+                    }
+                })
+                .flatten();
+                if let Some(client) = client {
+                    let client = TextClient::new(&client);
+                    let done =
+                        catch_panic("mouseDown", || crate::host::commit_clicked(client, offset));
+                    if done.is_none() {
+                        recover_from_panic(Some(client));
+                    }
+                }
+            }
         }
     }
 );
@@ -296,6 +323,38 @@ impl CandidateView {
             })
             .collect();
         (items, row_height)
+    }
+
+    /// 点击位置落在当前页第几格（从 0 数）；点在拼音行 / 页码 / 空白处返回 `None`。
+    /// 坐标是翻转后的视图坐标（左上为原点），与画行用的同一套。
+    fn row_at_point(&self, point: NSPoint) -> Option<usize> {
+        let frame = self.ivars().frame.borrow();
+        if frame.rows.is_empty() {
+            return None;
+        }
+        let theme = self.theme();
+        let top = theme.padding + self.top_line_size(&frame).1;
+        match self.ivars().layout.get() {
+            LayoutMode::Vertical => {
+                let columns = self.columns(&frame.rows);
+                vertical_row(point.y, top, columns.row_height, frame.rows.len())
+            }
+            LayoutMode::Horizontal => {
+                let (items, _) = self.items(&frame.rows);
+                let widths: Vec<f64> = items
+                    .iter()
+                    .map(|item| item.index_width + INDEX_GAP + item.text_width)
+                    .collect();
+                horizontal_item(
+                    point.x,
+                    point.y,
+                    top,
+                    theme.padding + HIGHLIGHT_INSET,
+                    &widths,
+                    theme.column_gap,
+                )
+            }
+        }
     }
 
     fn draw(&self) {

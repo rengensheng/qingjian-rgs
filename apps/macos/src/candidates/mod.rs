@@ -2,6 +2,7 @@
 
 mod cloud_icon;
 mod frame;
+mod hit;
 mod preedit;
 mod row;
 mod theme;

@@ -6,14 +6,13 @@
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{define_class, msg_send, sel};
-use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType, NSMenu};
-use objc2_foundation::NSObjectProtocol;
+use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSMenu};
+use objc2_foundation::{NSObjectProtocol, NSUInteger};
 use objc2_input_method_kit::{IMKInputController, IMKServer};
-use qingjian_core::{Candidate, QUESTION_PREFIX};
+use qingjian_core::QUESTION_PREFIX;
 use qingjian_platform::Modifiers;
 
 use super::{TextClient, catch_panic, modifiers, recover_from_panic, secure_input};
-use crate::candidates::Preedit;
 use crate::host;
 use crate::menubar;
 
@@ -50,6 +49,13 @@ define_class!(
         fn handle_event(&self, event: Option<&NSEvent>, client: Option<&AnyObject>) -> bool {
             match (event, client) {
                 (Some(event), Some(client)) => {
+                    // 记下当前会话的客户端：候选窗是进程级的，鼠标点选时靠它把词送进应用；
+                    // retain 住不会悬空，停用时清空
+                    host::with(|h| {
+                        h.active_client = unsafe {
+                            Retained::retain(client as *const AnyObject as *mut AnyObject)
+                        };
+                    });
                     let client = TextClient::new(client);
                     // panic 拦下后把缓冲区原样上屏，这个按键交还给应用
                     catch_panic("handleEvent", || self.dispatch_event(event, client))
@@ -62,17 +68,32 @@ define_class!(
             }
         }
 
+        /// 声明要收的事件：按键 + 修饰键变化 + 鼠标按下。
+        ///
+        /// 缺省实现只返回 `NSKeyDownMask`，那样 `FlagsChanged`（单击 Shift 切换的事件来源）永远送不到 `handleEvent:`。
+        /// 一旦返回值不只剩 KeyDown，系统默认的「组句中在组句外点击就上屏」就不做了，所以鼠标按下自己处理
+        ///（`dispatch_event` 里组句中先上屏再交给应用）。
+        #[unsafe(method(recognizedEvents:))]
+        fn recognized_events(&self, _sender: Option<&AnyObject>) -> NSUInteger {
+            (NSEventMask::KeyDown
+                | NSEventMask::FlagsChanged
+                | NSEventMask::LeftMouseDown
+                | NSEventMask::RightMouseDown)
+                .bits() as NSUInteger
+        }
+
         /// 应用要求立刻结束本次输入（切换焦点、切换输入法等）。
         #[unsafe(method(commitComposition:))]
         fn commit_composition(&self, client: Option<&AnyObject>) {
             let client = client.map(TextClient::new);
             let done = catch_panic("commitComposition", || {
                 if let Some(client) = client {
-                    self.commit_raw(client);
+                    host::commit_raw(client);
                 }
                 host::with(|h| {
                     h.cancel_prediction();
                     h.window.hide();
+                    h.active_client = None;
                 });
             });
             if done.is_none() {
@@ -92,7 +113,8 @@ define_class!(
                 host::with(|h| {
                     h.engine.set_application(bundle);
                     h.reload_config_if_changed();
-                    h.indicator.activate();
+                    let english = h.english;
+                    h.indicator.activate(english);
                     h.watch.start();
                 });
             });
@@ -121,13 +143,14 @@ define_class!(
             let client = sender.map(TextClient::new);
             let done = catch_panic("deactivateServer", || {
                 if let Some(client) = client {
-                    self.commit_raw(client);
+                    host::commit_raw(client);
                 }
                 // 切换输入源时无论如何都收掉候选框，不能留一个孤儿窗口在屏幕上
                 host::with(|h| {
                     h.cancel_prediction();
                     h.window.hide();
                     h.indicator.deactivate();
+                    h.active_client = None;
                     h.watch.stop();
                     h.engine.break_chain();
                     h.engine.flush_learning();
@@ -139,6 +162,7 @@ define_class!(
                 // 善后里没做的收尾：学习数据还是要落盘
                 host::with(|h| {
                     h.indicator.deactivate();
+                    h.active_client = None;
                     h.watch.stop();
                     h.engine.flush_learning();
                 });
@@ -152,9 +176,6 @@ define_class!(
 /// 数字行与小键盘的键码对应的数字 1–9（ANSI 布局的物理键）。
 /// 翻译选中文字最多接受多少个字符：再长既慢又贵，也不是输入法该干的事。
 const MAX_TRANSLATE_CHARS: usize = 500;
-
-/// 给本地整句模型看的光标前文最多读多少字符（Engine 自己再按它的前文长度截）。
-const RESCORE_LOOKBACK: usize = qingjian_core::RESCORE_CONTEXT_CHARS;
 
 fn digit_key(key_code: u16) -> Option<usize> {
     Some(match key_code {
@@ -172,11 +193,25 @@ fn digit_key(key_code: u16) -> Option<usize> {
 }
 
 impl QingjianInputController {
-    /// 一个按键事件的分发：只管按下；Cmd / Ctrl 组合除 Cmd+左右外一律交给应用；命令键映射成选择器；其余按字符当文本。
+    /// 一个按键事件的分发：Shift 的按下 / 抬起走单击判定；只管按下；Cmd / Ctrl 组合除 Cmd+左右外一律交给应用；命令键映射成选择器；其余按字符当文本。
     fn dispatch_event(&self, event: &NSEvent, client: TextClient<'_>) -> bool {
+        if event.r#type() == NSEventType::FlagsChanged {
+            return self.handle_flags_changed(event, client);
+        }
+        if event.r#type() == NSEventType::LeftMouseDown
+            || event.r#type() == NSEventType::RightMouseDown
+        {
+            // 组句中在外面点了：先上屏（原来系统默认行为，声明事件后自己做），点击本身交给应用
+            if host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false) {
+                host::commit_raw(client);
+            }
+            return false;
+        }
         if event.r#type() != NSEventType::KeyDown {
             return false;
         }
+        // 任一普通键按下：之前按下的 Shift 是在组组合键，抬起时不切换模式
+        host::with(|h| h.shift_tap.key_down());
         let flags = event.modifierFlags();
         let (command, control, option, shift) = (
             flags.contains(NSEventModifierFlags::Command),
@@ -265,6 +300,33 @@ impl QingjianInputController {
         }
     }
 
+    /// 修饰键变化：只认左右 Shift 的按下 / 抬起，按下到抬起之间没插进别的键就是一次单击，翻转中英模式。
+    /// 组句中的拼音先原样上屏再切换。修饰键本身永远交给系统，返回 false。
+    fn handle_flags_changed(&self, event: &NSEvent, client: TextClient<'_>) -> bool {
+        let key = event.keyCode();
+        let shift = event.modifierFlags().contains(NSEventModifierFlags::Shift);
+        tracing::debug!(key, shift, "FlagsChanged");
+        if !modifiers::SHIFT_KEY_CODES.contains(&key) {
+            return false;
+        }
+        if shift {
+            tracing::debug!("Shift 按下");
+            host::with(|h| h.shift_tap.shift_pressed());
+            return false;
+        }
+        if !host::with(|h| h.shift_tap.shift_released()).unwrap_or(false) {
+            tracing::debug!("Shift 抬起（之前组了组合键，不切换）");
+            return false;
+        }
+        let raw = host::with(|h| h.toggle_english()).unwrap_or_default();
+        if !raw.is_empty() {
+            tracing::debug!(%raw, "切换模式：组句拼音原样上屏");
+            client.insert_text(&raw);
+        }
+        host::refresh(client);
+        false
+    }
+
     /// Option+数字：上屏当前页第几个候选的译文（学习和拼音消耗与选那个候选一样）。
     /// 不在组句中时不管；候选没有译文就吞掉按键不动，免得 ¡™£ 进应用。
     /// 翻译应用里选中的文字：云服务关着、密码框、没有选区都不动（键交回应用）。
@@ -349,7 +411,7 @@ impl QingjianInputController {
             Some(text) => {
                 tracing::debug!(%text, "commit translation");
                 client.insert_text(&text);
-                self.refresh(client);
+                host::refresh(client);
             }
             None => tracing::debug!(digit, sense, "这个候选没有这条译文"),
         }
@@ -368,9 +430,9 @@ impl QingjianInputController {
             return true;
         };
         tracing::info!(%message);
-        self.refresh(client);
+        host::refresh(client);
         host::with(|h| h.status = Some(message));
-        self.render(client);
+        host::render(client);
         true
     }
 
@@ -378,32 +440,40 @@ impl QingjianInputController {
         tracing::debug!(%text, "inputText");
         self.note_application(&client);
         let mut composing = host::with(|h| !h.engine.composition().is_empty()).unwrap_or(false);
-        let english = modifiers::caps_lock_on();
+        // 持久中英模式（单击 Shift 切换）；Caps Lock 只管字母大小写，不管模式
+        let caps = modifiers::caps_lock_on();
+        let english = host::with(|h| h.english).unwrap_or(false);
         // 终端、编辑器这类应用（`[apps] english_candidates_off`）里英文模式是纯直通
         let english_candidates = english
             && host::with(|h| h.english_candidates_in(client.bundle_identifier().as_deref()))
                 .unwrap_or(false);
-        // 英文模式组词中 Caps Lock 灭了（或开关关了）：敲的字母先原样上屏，别把它们当拼音
+        // 翻页键对（配置 `[general] page_keys`）：组句中它们永远优先，进缓冲区的各分支都要让路
+        let (page_previous, page_next) =
+            host::with(|h| h.page_keys).unwrap_or(qingjian_platform::DEFAULT_PAGE_KEYS);
+        // 英文模式组词中切回中文（或开关关了）：敲的字母先原样上屏，别把它们当拼音
         if composing
             && !english_candidates
             && host::with(|h| h.engine.english_mode()).unwrap_or(false)
         {
-            self.commit_raw(client);
+            host::commit_raw(client);
             composing = false;
         }
         let [byte] = text.as_bytes() else {
             // 多字符文本（如输入法联动、粘贴）：先把当前候选（英文模式下是敲的字母）上屏，再交给应用
             if composing {
                 if host::with(|h| h.engine.english_mode()).unwrap_or(false) {
-                    self.commit_raw(client);
+                    host::commit_raw(client);
                 } else {
-                    self.commit_highlighted(client);
+                    host::commit_highlighted(client);
                 }
             }
             return false;
         };
         let c = char::from(*byte);
-        host::with(|h| h.indicator.update());
+        host::with(|h| {
+            let english = h.english;
+            h.indicator.update(english);
+        });
         // 缓冲区为空时敲 ? 先进问字模式（配置 `[shortcut] question_mark`，缺省关），中英文模式都行：
         // 后面跟字母就是在问字，跟别的键就还原成问号
         if !composing
@@ -411,7 +481,7 @@ impl QingjianInputController {
             && host::with(|h| h.engine.takes_question_mark()).unwrap_or(false)
         {
             host::with(|h| h.engine.push(c));
-            self.refresh(client);
+            host::refresh(client);
             return true;
         }
         let question = composing && host::with(|h| h.engine.question_mode()).unwrap_or(false);
@@ -422,17 +492,18 @@ impl QingjianInputController {
             c
         };
         host::with(|h| h.engine.set_english_mode(english_candidates && !question));
-        // Caps Lock 亮着 = 英文模式：不组句、不转标点，字母默认小写、按住 Shift 才大写
+        // 英文模式：不组拼音、不转标点；字母大小写按 Caps 与 Shift 异或（与 Windows 一致），
+        // macOS 送来的字母大小写只看 Caps，所以先归一成小写再算
         if english && !question {
-            // Caps Lock 亮着时 macOS 不管按没按 Shift 送来的都是大写，只能读 Shift 状态：按着才大写
-            let letter = if modifiers::shift_down() {
-                c.to_ascii_uppercase()
+            let lower = c.to_ascii_lowercase();
+            let letter = if caps != modifiers::shift_down() {
+                lower.to_ascii_uppercase()
             } else {
-                c.to_ascii_lowercase()
+                lower
             };
             if !english_candidates {
                 if composing {
-                    self.commit_raw(client);
+                    host::commit_raw(client);
                 }
                 if c.is_ascii_alphabetic() {
                     client.insert_text(&letter.to_string());
@@ -447,18 +518,21 @@ impl QingjianInputController {
             // 选词靠 Tab 和方向键；用方向键动过高亮之后空格也选那个词（再把空格交给应用），
             // 没动过的空格还是原样上屏——不选词时它和纯直通完全一样，打 kubectl 这类词表没有的词不会被补全替换
             if c.is_ascii_alphabetic()
-                || (composing && (c.is_ascii_digit() || matches!(c, '_' | '\'' | '-')))
+                || (composing
+                    && (c.is_ascii_digit() || matches!(c, '_' | '\'' | '-'))
+                    && c != page_previous
+                    && c != page_next)
             {
                 host::with(|h| h.engine.push(letter));
-                self.refresh(client);
+                host::refresh(client);
                 return true;
             }
             if composing {
                 let navigated = host::with(|h| h.session.navigated).unwrap_or(false);
                 if c == ' ' && navigated {
-                    self.commit_highlighted(client);
+                    host::commit_highlighted(client);
                 } else {
-                    self.commit_raw(client);
+                    host::commit_raw(client);
                 }
             }
             host::with(|h| h.engine.note_passthrough(c));
@@ -468,15 +542,13 @@ impl QingjianInputController {
         let expression = composing && host::with(|h| h.engine.expression_mode()).unwrap_or(false);
         // 英文直输段（缓冲区里已有 `-` 这类字符）：可见字符一律追加，空格 / 回车整段原样上屏
         let raw = composing && host::with(|h| h.engine.raw_mode()).unwrap_or(false);
-        // 组句中敲 `-`：进入英文直输段（`no-way`），不再当翻页键；翻页键见配置 `[general] page_keys`
-        let hyphen = composing && !question && c == '-';
+        // 组句中敲 `-`：进入英文直输段（`no-way`）；翻页键是 `-` 时（配置 `-=`）翻页优先
+        let hyphen = composing && !question && c == '-' && c != page_previous && c != page_next;
         // 问字模式下敲的还可能是码点（`u4e00`、`u+1f600`）：数字与 `+` 进缓冲区而不是选词
         let unicode = question && host::with(|h| h.engine.unicode_entry()).unwrap_or(false);
         // 微软 / 搜狗双拼的 `;` 是 ing 键：末尾有落单声母时进缓冲区，其他时候还是标点
         let semicolon =
             composing && c == ';' && host::with(|h| h.engine.takes_semicolon()).unwrap_or(false);
-        let (page_previous, page_next) =
-            host::with(|h| h.page_keys).unwrap_or(qingjian_platform::DEFAULT_PAGE_KEYS);
         // 组句中敲半角标点：进缓冲区，整段成为英文直输段（`hello,` `dui'ma?`），中文模式下也能打带标点的英文；
         // 翻页键除外；⇧+数字（! @ # …）在前面已被删候选 / 译词键截走
         let punctuation = composing
@@ -495,12 +567,12 @@ impl QingjianInputController {
             || punctuation
         {
             host::with(|h| h.engine.push(c));
-            self.refresh(client);
+            host::refresh(client);
             return true;
         }
         // 直输段里的空格：整段原样上屏，空格本身也交给应用（`hello, world` 里的空格要在）
         if raw && c == ' ' {
-            self.commit_highlighted(client);
+            host::commit_highlighted(client);
             host::with(|h| h.engine.note_passthrough(c));
             return false;
         }
@@ -514,14 +586,14 @@ impl QingjianInputController {
         // 按住 Shift 打的大写字母：临时打英文，先把拼音原样上屏，再把字母交给应用
         if c.is_ascii_uppercase() {
             if composing {
-                self.commit_raw(client);
+                host::commit_raw(client);
             }
             host::with(|h| h.engine.note_passthrough(c));
             return false;
         }
         if composing {
             match c {
-                ' ' => return self.commit_highlighted(client),
+                ' ' => return host::commit_highlighted(client),
                 '1'..='9' => {
                     let offset = usize::from(*byte - b'1');
                     let (index, cells) = host::with(|h| {
@@ -532,17 +604,17 @@ impl QingjianInputController {
                     })
                     .unwrap_or((None, 0));
                     return match index {
-                        Some(index) => self.commit_index(index, client),
+                        Some(index) => host::commit_index(index, client),
                         // 云端词还没到的占位格：数字键按了不算，免得结果一到就选错
                         None if offset < cells => true,
-                        None => self.commit_raw(client),
+                        None => host::commit_raw(client),
                     };
                 }
-                c if c == page_previous => return self.turn_page(-1, client),
-                c if c == page_next => return self.turn_page(1, client),
+                c if c == page_previous => return host::turn_page(-1, client),
+                c if c == page_next => return host::turn_page(1, client),
                 // 其他字符：把当前高亮候选上屏，再按非组句状态处理这个字符
                 _ => {
-                    self.commit_highlighted(client);
+                    host::commit_highlighted(client);
                 }
             }
         }
@@ -581,15 +653,15 @@ impl QingjianInputController {
         }
         if selector == sel!(deleteBackward:) {
             host::with(|h| h.engine.backspace());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(deleteWordBackward:) {
             // ⌥⌫：删光标前一个音节
             host::with(|h| h.engine.delete_syllable_backward());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(deleteToBeginningOfLine:) {
             // ⌘⌫：删光标前的全部拼音
             host::with(|h| h.engine.delete_to_start());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector != sel!(cancelOperation:)
             && selector != sel!(complete:)
             && self.restore_bare_question(client)
@@ -598,121 +670,64 @@ impl QingjianInputController {
             // 方向键等其他键还原后交给应用
             return selector == sel!(insertNewline:);
         } else if selector == sel!(insertNewline:) {
-            self.commit_raw(client);
+            host::commit_raw(client);
         } else if selector == sel!(cancelOperation:) || selector == sel!(complete:) {
             // TextEdit 等应用把 Esc 绑成 complete:（自动补全），也当作取消
             host::with(|h| {
                 h.engine.clear();
                 h.cancel_prediction();
             });
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(insertTab:) {
             // 英文模式 Tab 选中高亮的词；中文模式有整句补全时接受它，否则翻页
             if host::with(|h| h.engine.english_mode()).unwrap_or(false) {
-                self.commit_highlighted(client);
-            } else if !self.accept_sentence(client) {
-                self.turn_page(1, client);
+                host::commit_highlighted(client);
+            } else if !host::accept_sentence(client) {
+                host::turn_page(1, client);
             }
         } else if selector == sel!(deleteForward:) {
             host::with(|h| h.engine.delete_forward());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(moveDown:) {
-            self.move_highlight(1, client);
+            host::move_highlight(1, client);
         } else if selector == sel!(moveUp:) {
-            self.move_highlight(-1, client);
+            host::move_highlight(-1, client);
         } else if selector == sel!(moveLeft:) {
             host::with(|h| h.engine.move_cursor_left());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(moveRight:) {
             host::with(|h| h.engine.move_cursor_right());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(moveWordLeft:) {
             // ⌥←：光标往左跳一个音节
             host::with(|h| h.engine.move_cursor_syllable_left());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(moveWordRight:) {
             // ⌥→：光标往右跳一个音节
             host::with(|h| h.engine.move_cursor_syllable_right());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(moveToBeginningOfLine:) || selector == sel!(moveToLeftEndOfLine:)
         {
             host::with(|h| h.engine.move_cursor_home());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(moveToEndOfLine:) || selector == sel!(moveToRightEndOfLine:) {
             host::with(|h| h.engine.move_cursor_end());
-            self.refresh(client);
+            host::refresh(client);
         } else if selector == sel!(pageDown:) || selector == sel!(scrollPageDown:) {
-            self.turn_page(1, client);
+            host::turn_page(1, client);
         } else if selector == sel!(pageUp:)
             || selector == sel!(scrollPageUp:)
             || selector == sel!(insertBacktab:)
         {
-            self.turn_page(-1, client);
+            host::turn_page(-1, client);
         }
         true
-    }
-
-    /// 按当前缓冲区重新查候选、更新 marked text，回到第一页并重画候选窗口。
-    fn refresh(&self, client: TextClient<'_>) {
-        // 本地整句模型要看光标前文：一段组句只在第一键读一次（组句中它不变；应用偶尔不回话也不至于让前文来回换），
-        // 读应用文本要等应用回话，放在借 Host 之外（见 request_prediction）
-        let wants_context = host::with(|h| {
-            h.attach_loaded_model();
-            h.engine.has_sentence_scorer() && h.engine.composition().text().chars().count() == 1
-        })
-        .unwrap_or(false);
-        let before = if wants_context && !secure_input::enabled() {
-            Some(
-                client
-                    .surrounding_text(RESCORE_LOOKBACK, 0)
-                    .map(|text| text.before),
-            )
-        } else {
-            None
-        };
-        let Some((marked, cursor, inline)) = host::with(|h| {
-            if let Some(before) = before {
-                h.engine.set_rescoring_context(before);
-            }
-            // 查询失败（整段切不动）时退回显示原始字母
-            let mut marked = h.engine.composition().text().to_owned();
-            let mut cursor = h.engine.composition().cursor();
-            let mut preedit = Preedit::plain(&marked, cursor);
-            let candidates = h
-                .engine
-                .query()
-                .map(|mut query| {
-                    h.engine.annotate(&mut query.candidates);
-                    marked = query.marked_text();
-                    cursor = query.marked_cursor();
-                    preedit = Preedit::from_marked(&query.marked_segments(), cursor);
-                    query.candidates.items
-                })
-                .unwrap_or_default();
-            h.reset_session(preedit, candidates);
-            h.schedule_rescoring();
-            (marked, cursor, h.preedit_mode.inline())
-        }) else {
-            return;
-        };
-        // 配置成只在候选窗口显示拼音时，应用里不放 marked text（光标位置仍按插入点取）
-        if inline {
-            client.set_marked_text(&marked, cursor);
-        } else {
-            client.set_marked_text("", 0);
-        }
-        // 先发联想再画：发出去就留好云端槽位，画出来的第一帧本地候选就已经在最终位置
-        if !marked.is_empty() {
-            let candidates = host::with(|h| h.session.layout.local().to_vec()).unwrap_or_default();
-            self.request_prediction(client, &candidates);
-        }
-        self.render(client);
     }
 
     /// 缓冲区里只有一个 `?` 而用户按了别的键：把它还原成问号上屏（中文遵循标点设置、英文半角）、清空缓冲区。
     /// 返回是否发生了还原。
     fn restore_bare_question(&self, client: TextClient<'_>) -> bool {
-        let english = modifiers::caps_lock_on();
+        let english = host::with(|h| h.english).unwrap_or(false);
         let restored = host::with(|h| {
             let mark = h.engine.restore_bare_question(english)?;
             h.cancel_prediction();
@@ -723,70 +738,8 @@ impl QingjianInputController {
             return false;
         };
         client.insert_text(&mark);
-        self.refresh(client);
+        host::refresh(client);
         true
-    }
-
-    /// 记下光标位置并按会话状态重画候选窗口。
-    fn render(&self, client: TextClient<'_>) {
-        let anchor = client.caret_rect();
-        host::with(|h| {
-            h.anchor = anchor;
-            h.render();
-        });
-    }
-
-    /// 发一次联想请求。Secure Input 里绝不发；没接联想器时是空操作。
-    ///
-    /// 读上下文要等应用回话，这段时间 IMK 可能把 `deactivateServer:` 之类的回调插进来，
-    /// 所以分两次借 Host：先拿策略、放开借用去读、再借回来发请求。
-    fn request_prediction(&self, client: TextClient<'_>, candidates: &[Candidate]) {
-        let policy = host::with(|h| {
-            if !h.engine.prediction_enabled() {
-                return None;
-            }
-            if secure_input::enabled() {
-                tracing::debug!("Secure Input 中，不联想");
-                h.cancel_prediction();
-                return None;
-            }
-            Some(h.engine.prediction_policy())
-        })
-        .flatten();
-        let Some(policy) = policy else {
-            return;
-        };
-        let surrounding = client.surrounding_text(policy.before, policy.after);
-        host::with(|h| {
-            tracing::debug!(
-                has_context = surrounding.is_some(),
-                pinyin = h.engine.composition().scope(),
-                "联想请求"
-            );
-            match h.engine.request_prediction(surrounding, candidates) {
-                Some(_) => h.await_prediction(),
-                None => h.cancel_prediction(),
-            }
-        });
-    }
-
-    /// 接受组句中的整句补全：作用域内的拼音作废，句子上屏。没有补全返回 false。
-    fn accept_sentence(&self, client: TextClient<'_>) -> bool {
-        let Some(text) = host::with(|h| h.sentence.take()).flatten() else {
-            return false;
-        };
-        host::with(|h| h.engine.accept_prediction(&text));
-        tracing::debug!(%text, "接受整句补全");
-        client.insert_text(&text);
-        self.refresh(client);
-        true
-    }
-
-    /// 高亮上下移动，越过页边自动翻页。
-    fn move_highlight(&self, delta: isize, client: TextClient<'_>) {
-        if host::with(|h| h.session.move_highlight(delta)).unwrap_or(false) {
-            self.render(client);
-        }
     }
 
     /// 每个键都问一次应用标识（activateServer 时进程刚拉起可能还拿不到），变了才告诉 Engine。
@@ -797,58 +750,5 @@ impl QingjianInputController {
                 h.engine.set_application(app);
             }
         });
-    }
-
-    /// 翻页，高亮落到新页第一项。已在首页 / 末页时不动。
-    fn turn_page(&self, delta: isize, client: TextClient<'_>) -> bool {
-        let turned = host::with(|h| {
-            let turned = h.session.turn_page(delta);
-            if turned {
-                h.engine.note_page_turn();
-            }
-            turned
-        })
-        .unwrap_or(false);
-        if turned {
-            self.render(client);
-        }
-        true
-    }
-
-    fn commit_highlighted(&self, client: TextClient<'_>) -> bool {
-        let index = host::with(|h| h.session.highlighted).unwrap_or(0);
-        self.commit_index(index, client)
-    }
-
-    /// 上屏第 `index` 个候选；没有候选时上屏拼音本身。上屏后剩余拼音继续组句。
-    fn commit_index(&self, index: usize, client: TextClient<'_>) -> bool {
-        let candidate = host::with(|h| h.session.candidate(index)).flatten();
-        let Some(candidate) = candidate else {
-            if host::with(|h| index < h.session.layout.len()).unwrap_or(false) {
-                return true;
-            }
-            return self.commit_raw(client);
-        };
-        let Some(text) = host::with(|h| h.engine.commit(&candidate)) else {
-            return false;
-        };
-        tracing::debug!(%text, "commit");
-        client.insert_text(&text);
-        self.refresh(client);
-        true
-    }
-
-    /// 把拼音原样上屏并清空。缓冲区为空时返回 false。
-    fn commit_raw(&self, client: TextClient<'_>) -> bool {
-        let Some(raw) = host::with(|h| h.engine.take_raw()) else {
-            return false;
-        };
-        if raw.is_empty() {
-            return false;
-        }
-        tracing::debug!(%raw, "commit raw");
-        client.insert_text(&raw);
-        self.refresh(client);
-        true
     }
 }

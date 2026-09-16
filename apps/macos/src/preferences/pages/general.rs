@@ -101,7 +101,7 @@ impl GeneralPage {
         );
         let english = checkbox(
             mtm,
-            "英文模式（Caps Lock）也给候选",
+            "英文模式（单击 Shift 切换）也给候选",
             Setting::EnglishCandidates,
             target,
         );
@@ -109,7 +109,7 @@ impl GeneralPage {
         note(
             layout,
             mtm,
-            "Tab 或方向键选词；空格、回车、标点仍原样上屏敲的字母，不选词时与直接打字一样。",
+            "单击 Shift（按下即松开，不与其他键组合）在中 / 英之间切换，也可以在输入法菜单里点「切换中 / 英」；Caps Lock 只管字母大小写。Tab 或方向键选词；空格、回车、标点仍原样上屏敲的字母，不选词时与直接打字一样。",
         );
         let english_off_in_apps = checkbox(
             mtm,

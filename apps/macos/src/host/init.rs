@@ -148,6 +148,8 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
             preedit_mode: PreeditMode::default(),
             english_candidates: true,
             apps: AppsConfig::default(),
+            english: false,
+            shift_tap: crate::imk::ShiftTap::default(),
             monitor,
             cloud_test: None,
             cloud_test_monitor: CloudTestMonitor::new(mtm),
@@ -155,6 +157,7 @@ pub fn init(mtm: MainThreadMarker, info: &BundleInfo) -> Result<(), HostError> {
             model_loader: None,
             applied_model: None,
             session: Session::default(),
+            active_client: None,
             sentence: None,
             anchor: NSRect::ZERO,
         })

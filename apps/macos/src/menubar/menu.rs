@@ -36,6 +36,13 @@ impl InputMenu {
         let cloud = action_item(mtm, "云联想", Some(MenuAction::ToggleCloud), &target);
         menu.addItem(&cloud);
 
+        menu.addItem(&action_item(
+            mtm,
+            "切换中 / 英（⇧ 单击）",
+            Some(MenuAction::ToggleEnglish),
+            &target,
+        ));
+
         let fuzzy_menu = NSMenu::new(mtm);
         fuzzy_menu.setAutoenablesItems(false);
         let fuzzy: Vec<_> = FuzzyRules::NAMES

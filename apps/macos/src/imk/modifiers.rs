@@ -2,7 +2,10 @@
 
 use objc2_app_kit::{NSEvent, NSEventModifierFlags};
 
-/// Caps Lock 亮着：视为英文模式，字母默认小写、按住 Shift 才大写、标点不转全角。
+/// 左右 Shift 的键码（`kVK_Shift` / `kVK_RightShift`），`FlagsChanged` 事件里认 Shift 用。
+pub const SHIFT_KEY_CODES: [u16; 2] = [56, 60];
+
+/// Caps Lock 亮着：只管字母大小写，不再切换中英模式（模式靠单击 Shift，见 [`crate::imk::ShiftTap`]）。
 pub fn caps_lock_on() -> bool {
     NSEvent::modifierFlags_class().contains(NSEventModifierFlags::CapsLock)
 }

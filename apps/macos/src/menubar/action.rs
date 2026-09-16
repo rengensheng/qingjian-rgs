@@ -10,6 +10,9 @@ pub enum MenuAction {
     /// 开关云联想（写 `[predict] enabled`）。
     ToggleCloud,
 
+    /// 中英模式翻转（与单击 Shift 相同，不写配置文件）。
+    ToggleEnglish,
+
     /// 开关一条模糊音规则，值是 [`FuzzyRules::NAMES`] 的下标。
     ToggleFuzzy(usize),
 
@@ -26,6 +29,7 @@ impl MenuAction {
             Self::ToggleCloud => 1,
             Self::OpenPreferences => 2,
             Self::OpenLogs => 3,
+            Self::ToggleEnglish => 4,
             Self::ToggleFuzzy(index) => FUZZY_TAG_BASE + index as NSInteger,
         }
     }
@@ -35,6 +39,7 @@ impl MenuAction {
             1 => Self::ToggleCloud,
             2 => Self::OpenPreferences,
             3 => Self::OpenLogs,
+            4 => Self::ToggleEnglish,
             _ => {
                 let index = usize::try_from(tag.checked_sub(FUZZY_TAG_BASE)?).ok()?;
                 (index < FuzzyRules::NAMES.len()).then_some(Self::ToggleFuzzy(index))?
@@ -51,6 +56,7 @@ mod tests {
     fn tags_round_trip() {
         let all = [
             MenuAction::ToggleCloud,
+            MenuAction::ToggleEnglish,
             MenuAction::OpenPreferences,
             MenuAction::OpenLogs,
             MenuAction::ToggleFuzzy(0),
