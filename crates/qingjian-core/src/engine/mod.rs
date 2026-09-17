@@ -270,8 +270,9 @@ const EMOJI_TOTAL: usize = 3;
 /// 第一次可能是误选或偶然。
 const AUTO_WORD_THRESHOLD_SAME_BUFFER: u32 = 2;
 
-/// 分两段打的（`qing` 选 青、再打 `jian` 选 简）信号弱一些，要三次，免得 了我 这类虚词接续也成词。
-const AUTO_WORD_THRESHOLD: u32 = 3;
+/// 分两段打的（`qing` 选 青、再打 `jian` 选 简）信号弱一些，要两次，免得一次误选就成词。
+/// 例外：单字 + 单字连选（`fei` 选 飞、`shu` 选 书）一次就造，见 `record_word`。
+const AUTO_WORD_THRESHOLD: u32 = 2;
 
 /// 退格撤销最多回看几次上屏：删掉「沃德 书」两个词再重打时，要能找到两个词之前的那一次。
 const RECENT_COMMITS: usize = 4;

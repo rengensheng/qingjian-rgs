@@ -494,6 +494,7 @@ impl Engine {
 
     /// 一个中文词上屏了：记 `times` 份转移、推进链；`auto_word` 为真（用户自己选的词）时，
     /// 紧接着上一个词、合起来词库里没有、且这条接续记够次数还自动造词。
+    /// 单字 + 单字是「连续单字输入拼词」的最强信号，接续一次就造（阈值 1）；其他组合按传入的阈值。
     pub(super) fn record_word(
         &mut self,
         text: &str,
@@ -507,7 +508,14 @@ impl Engine {
         self.recording
             .push(Transition::new(self.chain.context(), text, times));
         if auto_word {
-            let threshold = if self.chain.same_buffer() {
+            let single_pair = text.chars().count() == 1
+                && self
+                    .chain
+                    .previous()
+                    .is_some_and(|p| p.chars().count() == 1);
+            let threshold = if single_pair {
+                1
+            } else if self.chain.same_buffer() {
                 AUTO_WORD_THRESHOLD_SAME_BUFFER
             } else {
                 AUTO_WORD_THRESHOLD
@@ -518,6 +526,7 @@ impl Engine {
     }
 
     /// 上一个词 + 这个词合成用户词的条件见 [`AUTO_WORD_THRESHOLD`]。
+    /// 造成用户词的同时记一次「整段拼音 → 新词」的选择，下次整段打出来它排第一。
     pub(super) fn try_auto_word(&mut self, text: &str, syllables: &[String], threshold: u32) {
         let Some(previous) = self.chain.previous().map(str::to_owned) else {
             return;
@@ -550,6 +559,11 @@ impl Engine {
         tracing::debug!(text = %candidate.text, "自动造词");
         self.learner
             .learn_word(&candidate.text, &candidate.syllables);
+        // 新词刚入库只有用户词表的基础词频，整段重打时排不过词库词：把「整段拼音 → 新词」
+        // 记一次选择（与 `finish_buffer` 同理），下次整段打出来它靠选择次数排第一。
+        // 键用音节直拼（无分隔符），与查询时的 `choice_key` 对得上；纠错过的下次打对也能命中。
+        let full_key: String = candidate.syllables.concat();
+        self.learner.record_choice(&full_key, &candidate.text);
     }
 
     /// 主词库或用户词里是否已有这个词（同音节）。

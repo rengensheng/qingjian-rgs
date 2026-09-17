@@ -462,8 +462,8 @@ fn commits_feed_the_personal_bigram_and_form_words() {
     }
     assert_eq!(shared.lock().unwrap().0, ["开发先"]);
 
-    // 分两段打的要三次：咖啡 + 开 记两次不造词，第三次造
-    for round in 1..=3 {
+    // 分两段打的要两次：咖啡 + 开 记一次不造词，第二次造
+    for round in 1..=2 {
         engine.set_input("kafei");
         select(&mut engine, "咖啡");
         engine.set_input("kai");
@@ -472,10 +472,45 @@ fn commits_feed_the_personal_bigram_and_form_words() {
             shared.lock().unwrap().1.pair(Some("咖啡"), "开"),
             round * EXPLICIT_TRANSITION_WEIGHT
         );
-        assert_eq!(shared.lock().unwrap().0.len(), 1 + usize::from(round == 3));
+        assert_eq!(shared.lock().unwrap().0.len(), 1 + usize::from(round == 2));
         engine.punctuate('。');
     }
     assert_eq!(shared.lock().unwrap().0, ["开发先", "咖啡开"]);
+}
+
+#[test]
+fn two_single_chars_in_a_row_form_a_word_immediately() {
+    let shared = Arc::new(Mutex::new((Vec::new(), sentence::UserNgram::default())));
+    let learner = WordLearner {
+        shared: Arc::clone(&shared),
+        ..WordLearner::default()
+    };
+    let mut engine = engine().with_learner(Box::new(learner));
+    let select = |engine: &mut Engine, input: &str, text: &str| {
+        engine.set_input(input);
+        let candidate = engine
+            .query()
+            .unwrap()
+            .candidates
+            .items
+            .into_iter()
+            .find(|c| c.text == text && c.kind == CandidateKind::Chinese)
+            .unwrap();
+        engine.commit(&candidate);
+    };
+    // 分两段各打一个单字：接续一次就造词，不用等第二次
+    select(&mut engine, "kai", "开");
+    select(&mut engine, "xian", "先");
+    assert_eq!(shared.lock().unwrap().0, ["开先"]);
+    assert_eq!(
+        shared.lock().unwrap().1.pair(Some("开"), "先"),
+        EXPLICIT_TRANSITION_WEIGHT
+    );
+    // 造词附带一次「整段拼音 → 新词」的选择，下次整段打出来它排第一
+    assert_eq!(engine.learner().choice_weight("kaixian", "开先"), 1);
+    engine.set_input("kaixian");
+    let first = &engine.query().unwrap().candidates.items[0];
+    assert_eq!(first.text, "开先");
 }
 
 #[test]
