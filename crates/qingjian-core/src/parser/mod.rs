@@ -225,6 +225,15 @@ mod tests {
     }
 
     #[test]
+    fn nasal_interjections_segment_as_complete_syllables() {
+        assert_eq!(joined("ng")[0], "ng");
+        assert!(joined("ng").contains(&"n… g…".to_owned()));
+        assert_eq!(joined("hng")[0], "hng");
+        assert_eq!(joined("hm")[0], "hm");
+        assert!(is_fully_segmentable("ng"));
+        assert!(is_fully_segmentable("enni"));
+    }
+    #[test]
     fn long_input_stays_bounded() {
         let all = segment("womenjintianxiawuqukaihuiba").unwrap();
         assert!(all.len() <= MAX_SEGMENTATIONS);

@@ -28,7 +28,7 @@ use qingjian_format::Metadata;
 use crate::error::ConvertError;
 use entry::LexiconEntry;
 use pack::Pack;
-use readings::CharReadings;
+use readings::{CharReadings, extra_readings};
 
 /// 领域词最长几个字：再长是法规名、诗句，输入法用不上。
 const MAX_WORD_CHARS: usize = 10;
@@ -47,6 +47,18 @@ const MINOR_READING_SHARE: f64 = 0.05;
 
 /// 常用词表自带的读音与 LLM 标注不一致时，原表读音降到标注读音词频的几分之一保留（怎么打都找得到，但不抢首选）。
 const DISPUTED_READING_DIVISOR: u32 = 8;
+
+/// 把 [`extra_readings`] 并进单字的读音权重表：已有的不重复，补的按最高权重算
+/// （嗯的 en 是正经标准读音，不是次要变体，不该被 `MINOR_READING_SHARE` 打折）。
+fn union_extra_readings(ch: char, mut weighted: Vec<(String, f64)>) -> Vec<(String, f64)> {
+    let top = weighted.iter().map(|(_, w)| *w).fold(0.0_f64, f64::max);
+    for extra in extra_readings(ch) {
+        if !weighted.iter().any(|(syllable, _)| syllable == extra) {
+            weighted.push(((*extra).to_owned(), if top > 0.0 { top } else { 1.0 }));
+        }
+    }
+    weighted
+}
 
 /// 领域词库的中文名（文件名主干 → 名称），写进 `.qj` 元数据，偏好设置「词库」页显示它。
 const DOMAIN_NAMES: [(&str, &str); 11] = [
@@ -161,7 +173,7 @@ pub fn convert(
     extra.sort_unstable();
     chars.extend(extra.into_iter().map(|c| (c, None)));
     for (ch, level) in &chars {
-        let weighted = readings.weighted(*ch, MINOR_READING_SHARE);
+        let weighted = union_extra_readings(*ch, readings.weighted(*ch, MINOR_READING_SHARE));
         let valid: Vec<(String, f64)> = weighted
             .into_iter()
             .filter(|(syllable, _)| is_syllable(syllable))
@@ -434,4 +446,29 @@ fn write_domains(
         tracing::info!(domain = %name, entries = entries.len(), path = %qj_path.display(), "领域词库已写出");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn en_gets_all_three_readings_for_interjection() {
+        // Unihan 只给 ng（大陆标准）：补 en / eng，不重复、可查
+        let merged = union_extra_readings('嗯', vec![("ng".to_owned(), 1.0)]);
+        let mut syllables: Vec<&str> = merged.iter().map(|(s, _)| s.as_str()).collect();
+        syllables.sort_unstable();
+        assert_eq!(syllables, ["en", "eng", "ng"]);
+        assert!(merged.iter().all(|(s, _)| is_syllable(s)));
+        // 补的读音按最高权重，不被当次要读音打折
+        assert!(merged.iter().all(|(_, w)| *w == 1.0));
+        // Unihan 本来就有 en 时不重复
+        let merged =
+            union_extra_readings('嗯', vec![("ng".to_owned(), 2.0), ("en".to_owned(), 2.0)]);
+        assert_eq!(merged.len(), 3);
+        // 普通字不受影响
+        let weighted = vec![("en".to_owned(), 100.0)];
+        assert_eq!(union_extra_readings('恩', weighted.clone()), weighted);
+        assert!(extra_readings('恩').is_empty());
+    }
 }

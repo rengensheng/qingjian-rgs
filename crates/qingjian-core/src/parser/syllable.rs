@@ -2,11 +2,13 @@
 
 /// 无声调的普通话合法音节表（含 ü 写作 v / ue 两种写法）。
 ///
-/// 只放独立成字的音节，不含 `m` / `ng` / `hm` 这类叹词写法。按声母分组便于人工核对。
+/// 鼻音叹词 `ng`（嗯）/`hm` / `hng`（哼）收进来：不加打不出嗯。
+/// 裸的 `m` / `n`（呣、嗯 ň）没收：它们同时是声母，收进来会把 `m` / `n`
+/// 从“前缀简拼”（m… → 没/每…）变成“精确匹配”（只剩呣），回退不了。
 #[rustfmt::skip]
 pub const SYLLABLES: &[&str] = &[
-    // 零声母
-    "a", "ai", "an", "ang", "ao", "e", "ei", "en", "eng", "er", "o", "ou",
+    // 零声母（含鼻音叹词 ng；hm / hng 见 h 组）
+    "a", "ai", "an", "ang", "ao", "e", "ei", "en", "eng", "er", "o", "ou", "ng",
     "yi", "ya", "yao", "ye", "you", "yan", "yin", "yang", "ying", "yong", "yu", "yue", "yuan", "yun", "yo",
     "wu", "wa", "wo", "wai", "wei", "wan", "wen", "wang", "weng",
     // b p m f
@@ -22,7 +24,7 @@ pub const SYLLABLES: &[&str] = &[
     // g k h
     "ga", "ge", "gai", "gei", "gao", "gou", "gan", "gen", "gang", "geng", "gong", "gu", "gua", "guo", "guai", "gui", "guan", "gun", "guang",
     "ka", "ke", "kai", "kei", "kao", "kou", "kan", "ken", "kang", "keng", "kong", "ku", "kua", "kuo", "kuai", "kui", "kuan", "kun", "kuang",
-    "ha", "he", "hai", "hei", "hao", "hou", "han", "hen", "hang", "heng", "hong", "hu", "hua", "huo", "huai", "hui", "huan", "hun", "huang",
+    "ha", "he", "hai", "hei", "hao", "hou", "han", "hen", "hang", "heng", "hong", "hu", "hua", "huo", "huai", "hui", "huan", "hun", "huang", "hm", "hng",
     // j q x
     "ji", "jia", "jie", "jiao", "jiu", "jian", "jin", "jiang", "jing", "jiong", "ju", "jue", "juan", "jun",
     "qi", "qia", "qie", "qiao", "qiu", "qian", "qin", "qiang", "qing", "qiong", "qu", "que", "quan", "qun",

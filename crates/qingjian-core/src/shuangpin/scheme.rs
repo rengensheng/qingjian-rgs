@@ -194,10 +194,20 @@ mod tests {
 
     /// 每套方案：全部音节都能编成两键、再解回来是同一个音节。
     /// 只有 `lue` / `nue`（与 `lve` / `nve` 同键）和 `lo`（与 `luo` 同键）解回来是另一个写法。
+    /// 裸鼻音 `ng` / `hm` / `hng`（嗯、哼）没有标准双拼键位（`n` + `g` 会撞上 `neng`），不参与；
+    /// 双拼下这两个字走 `en` / `eng` / `heng` 读音照样打得出。
     #[test]
     fn every_syllable_round_trips() {
+        const NO_SHUANGPIN_KEYS: [&str; 3] = ["ng", "hm", "hng"];
         for scheme in Scheme::ALL {
             for syllable in parser::SYLLABLES {
+                if NO_SHUANGPIN_KEYS.contains(syllable) {
+                    assert!(
+                        scheme.encode(syllable).is_none(),
+                        "{scheme}: {syllable} 不该有键位"
+                    );
+                    continue;
+                }
                 let keys = scheme
                     .encode(syllable)
                     .unwrap_or_else(|| panic!("{scheme}: {syllable} 编不出"));

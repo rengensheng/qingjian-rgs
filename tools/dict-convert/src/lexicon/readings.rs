@@ -19,6 +19,16 @@ struct Entry {
     xhc: Vec<String>,
 }
 
+/// 单字在 Unihan 之外的惯用读音。
+/// 嗯在 Unihan 里只有 ng 系（大陆标准），但台湾标准读 en、通用词表标 eng，
+/// 三个都留：en / eng / ng 怎么敲都找得到（en↔eng 模糊默认互通，但键不存在就没用）。
+pub fn extra_readings(ch: char) -> &'static [&'static str] {
+    match ch {
+        '嗯' => &["en", "eng", "ng"],
+        _ => &[],
+    }
+}
+
 /// 字 → 读音。
 #[derive(Debug, Default)]
 pub struct CharReadings {
@@ -137,14 +147,14 @@ impl CharReadings {
             .collect()
     }
 
-    /// 一个词的标注是否每个字都落在该字的已知读音里（LLM 标注的校验）。
+    /// 一个词的标注是否每个字都落在该字的已知读音里（LLM 标注的校验，`extra_readings` 也算）。
     pub fn accepts_word(&self, text: &str, syllables: &[String]) -> bool {
         let chars: Vec<char> = text.chars().collect();
         chars.len() == syllables.len()
-            && chars
-                .iter()
-                .zip(syllables)
-                .all(|(ch, syllable)| self.all(*ch).iter().any(|r| r == syllable))
+            && chars.iter().zip(syllables).all(|(ch, syllable)| {
+                self.all(*ch).iter().any(|r| r == syllable)
+                    || extra_readings(*ch).contains(&syllable.as_str())
+            })
     }
 }
 
@@ -185,5 +195,8 @@ U+884C\tkXHC1983\t0442.080:háng 0443.050:hàng 0460.010:héng 1290.030:xíng\nU
         // 长 没加载进来，整词校验不过
         assert!(!readings.accepts_word("行长", &["hang".to_owned(), "zhang".to_owned()]));
         assert!(readings.accepts_word("女", &["nv".to_owned()]));
+        // 嗯不在 Unihan 文件里：Unihan 读音查不到，但惯用读音照样放行（别的生字不行）
+        assert!(readings.accepts_word("嗯", &["en".to_owned()]));
+        assert!(!readings.accepts_word("恩", &["en".to_owned()]));
     }
 }
