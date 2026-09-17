@@ -1,13 +1,12 @@
-//! 菜单栏里的「中 / 英」状态项。
+//! 菜单栏里的「中 / 英」状态项，常驻显示。
 //!
 //! 输入源图标（Info.plist 的 tsInputMethodIconFileKey）没法动态换，所以自己放一个 NSStatusItem。
 //! 模式是单击 Shift 切出来的软件状态（见 [`crate::host::Host::english`]），切换时直接刷新标题；
 //! 定时器只做兜底（云朵标识变化、极端情况下的状态对齐）。
 //!
-//! 状态项一旦创建就**不再隐藏**：`setVisible(false)` 再 `setVisible(true)` 会把它重新排到菜单栏最左边，用户 ⌘ 拖到输入法图标旁的位置就丢了
-//! （固定 autosave 名也保不住），而焦点每进出一次输入框 IMK 就 deactivate / activate 一轮。
-//! 停用时改成收成零宽、清空标题，并且延迟 [`COLLAPSE_DELAY`] 再收：焦点只是在输入框之间挪的话，半秒内就会再次激活，根本收不下去；
-//! 真换到别的输入法才收起来，切回来再展开，位置一直在。
+//! 状态项一旦创建就**常驻、不再收起**：`setVisible(false)` 再 `setVisible(true)` 会把它重新排到菜单栏最左边，用户 ⌘ 拖到输入法图标旁的位置就丢了
+//! （固定 autosave 名也保不住），而焦点每进出一次输入框 IMK 就 deactivate / activate 一轮，所以之前收成零宽的逻辑已去掉。
+//! 停用时只停掉轮询定时器，标题保留最后的中英状态；切到别的输入法它还占着位置，显示的是青简这边最后的模式。
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -18,21 +17,12 @@ use objc2_foundation::{NSObject, NSObjectProtocol, NSString, NSTimer, ns_string}
 /// 刷新状态项的兜底间隔。
 const POLL_INTERVAL: f64 = 0.25;
 
-/// 停用后隔多久才把状态项收起：焦点在输入框之间挪动时 deactivate 与下一次 activate 只隔几十毫秒。
-const COLLAPSE_DELAY: f64 = 0.5;
-
 pub struct ModeIndicator {
-    /// 菜单栏状态项。
+    /// 菜单栏状态项，常驻显示。
     item: Retained<NSStatusItem>,
 
     /// 轮询定时器；未激活时为 `None`。
     timer: Option<Retained<NSTimer>>,
-
-    /// 停用后延迟收起的一次性定时器；再次激活时取消。
-    collapse_timer: Option<Retained<NSTimer>>,
-
-    /// 正展开着（输入法激活中）。收起时不刷新标题。
-    shown: bool,
 
     /// 上次显示的是否英文模式，避免每次轮询都重设标题。
     english: Option<bool>,
@@ -45,29 +35,20 @@ pub struct ModeIndicator {
 
 impl ModeIndicator {
     pub fn new(mtm: MainThreadMarker) -> Self {
-        let item = NSStatusBar::systemStatusBar().statusItemWithLength(0.0);
+        let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         item.setAutosaveName(Some(ns_string!("QingjianModeIndicator")));
         item.setVisible(true);
         Self {
             item,
             timer: None,
-            collapse_timer: None,
-            shown: false,
             english: None,
             cloud: false,
             mtm,
         }
     }
 
-    /// 输入法激活：展开状态项并开始轮询；停用时安排的收起取消。
+    /// 输入法激活：保证状态项展开并开始轮询。
     pub fn activate(&mut self, english: bool) {
-        if let Some(timer) = self.collapse_timer.take() {
-            timer.invalidate();
-        }
-        if !self.shown {
-            self.shown = true;
-            self.item.setLength(NSVariableStatusItemLength);
-        }
         self.english = None;
         self.update(english);
         if self.timer.is_none() {
@@ -85,39 +66,11 @@ impl ModeIndicator {
         }
     }
 
-    /// 输入法停用：停止轮询，半秒后没再激活就收起。
+    /// 输入法停用：只停掉轮询，状态项常驻、标题保持最后的模式。
     pub fn deactivate(&mut self) {
         if let Some(timer) = self.timer.take() {
             timer.invalidate();
         }
-        if self.collapse_timer.is_some() {
-            return;
-        }
-        let target = ModeMonitor::new(self.mtm);
-        let timer = unsafe {
-            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                COLLAPSE_DELAY,
-                &target,
-                sel!(collapse:),
-                None,
-                false,
-            )
-        };
-        self.collapse_timer = Some(timer);
-    }
-
-    /// 收成零宽、清空标题；位置保留。
-    pub fn collapse(&mut self) {
-        self.collapse_timer = None;
-        if !self.shown {
-            return;
-        }
-        self.shown = false;
-        self.english = None;
-        if let Some(button) = self.item.button(self.mtm) {
-            button.setTitle(ns_string!(""));
-        }
-        self.item.setLength(0.0);
     }
 
     /// 点状态项弹出的菜单。
@@ -130,11 +83,8 @@ impl ModeIndicator {
         self.english = None;
     }
 
-    /// 按中英模式刷新标题；收起时不动。模式变化时调用方主动调，定时器只做兜底。
+    /// 按中英模式刷新标题。模式变化时调用方主动调，定时器只做兜底。
     pub fn update(&mut self, english: bool) {
-        if !self.shown {
-            return;
-        }
         if self.english == Some(english) {
             return;
         }
@@ -165,11 +115,6 @@ define_class!(
                 let english = h.english;
                 h.indicator.update(english);
             });
-        }
-
-        #[unsafe(method(collapse:))]
-        fn collapse(&self, _timer: Option<&AnyObject>) {
-            crate::host::with(|h| h.indicator.collapse());
         }
     }
 
