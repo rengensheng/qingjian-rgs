@@ -169,6 +169,63 @@ impl Engine {
         self.forget_span_cache();
     }
 
+    /// 挂上神经拼音纠错模型：规则纠错无果（两处以上错拼）时问它要提名，提名仍走噪声信道验证。
+    /// 同步调用（CLI 与评测用），查询当场问；壳里用 [`Self::set_async_neural_corrector`]。
+    /// 换模型后同作用域的缓存结论可能变，一并清掉。
+    pub fn with_neural_corrector(
+        mut self,
+        corrector: Box<dyn correction::PinyinCorrector>,
+    ) -> Self {
+        self.set_neural_corrector(Some(corrector));
+        self
+    }
+
+    /// 运行时换 / 卸神经纠错模型（壳里模型在后台加载完才接上）。
+    pub fn set_neural_corrector(
+        &mut self,
+        corrector: Option<Box<dyn correction::PinyinCorrector>>,
+    ) {
+        self.correction_worker = None;
+        self.neural_corrector = corrector;
+        self.forget_correction_state();
+    }
+
+    /// 挂上异步的神经纠错模型：模型进后台线程，查询不等它，壳在停稳后 [`Self::request_correction`]、
+    /// 结果到了 [`Self::poll_correction`] 后再查一次。同步模型同时卸掉，只留一路。
+    pub fn with_async_neural_corrector(
+        mut self,
+        corrector: Box<dyn correction::PinyinCorrector>,
+    ) -> Self {
+        self.set_async_neural_corrector(Some(corrector));
+        self
+    }
+
+    /// 运行时换 / 卸异步神经纠错模型（壳里模型在后台加载完才接上，配置关掉就卸）。
+    pub fn set_async_neural_corrector(
+        &mut self,
+        corrector: Option<Box<dyn correction::PinyinCorrector>>,
+    ) {
+        self.neural_corrector = None;
+        self.correction_worker = corrector.map(super::correction::CorrectionWorker::spawn);
+        self.forget_correction_state();
+    }
+
+    /// 是否挂了神经纠错模型（同步或异步）。
+    pub fn has_neural_corrector(&self) -> bool {
+        self.neural_corrector.is_some()
+            || self
+                .correction_worker
+                .as_ref()
+                .is_some_and(super::correction::CorrectionWorker::is_alive)
+    }
+
+    /// 纠错相关的状态作废：按作用域记的结论、等后台的作用域、后台给好的提名。
+    fn forget_correction_state(&mut self) {
+        *self.correction_cache.borrow_mut() = None;
+        *self.correction_wanted.borrow_mut() = None;
+        *self.correction_ready.borrow_mut() = Vec::new();
+    }
+
     /// 换一组个人 n-gram 插值参数（回放调参用）；整句格子缓存作废。
     pub fn set_interpolation(&mut self, interpolation: Interpolation) {
         self.interpolation = interpolation;

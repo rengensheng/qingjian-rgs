@@ -21,6 +21,9 @@ pub struct CloudPage {
     /// 本地整句模型开关。
     local_model: Retained<NSButton>,
 
+    /// 神经拼音纠错开关。
+    corrector: Retained<NSButton>,
+
     /// 云联想开关。
     enabled: Retained<NSButton>,
 
@@ -48,6 +51,13 @@ impl CloudPage {
             layout,
             mtm,
             "随包的小模型在本机给整句候选重新排序，全程离线；停键后几十毫秒生效。关掉只用词库统计。",
+        );
+        let corrector = checkbox(mtm, "神经拼音纠错", Setting::CorrectorEnabled, target);
+        row_checkbox(layout, &corrector);
+        note(
+            layout,
+            mtm,
+            "错了不止一处、规则修不动的拼音问本地模型，全程离线；只在规则无果时跑一次。关掉只用规则纠错。",
         );
         let enabled = checkbox(mtm, "启用云联想", Setting::CloudEnabled, target);
         row_checkbox(layout, &enabled);
@@ -96,6 +106,7 @@ impl CloudPage {
         );
         Self {
             local_model,
+            corrector,
             enabled,
             slots,
             base_url,
@@ -107,9 +118,21 @@ impl CloudPage {
 
     /// `key_present` 是密钥已经有了（环境或配置里）；密钥框永远不回显值，只换占位文字。
     /// `model_present` 是包里或用户目录里有模型文件，没有就把本地模型的勾选灰掉；云联想关着时它下面的项全灰。
-    pub fn sync(&self, config: &Config, key_present: bool, model_present: bool) {
+    /// `corrector_present` 同理管神经拼音纠错的勾选。
+    pub fn sync(
+        &self,
+        config: &Config,
+        key_present: bool,
+        model_present: bool,
+        corrector_present: bool,
+    ) {
         set_checked(&self.local_model, config.model.enabled && model_present);
         self.local_model.setEnabled(model_present);
+        set_checked(
+            &self.corrector,
+            config.correction.enabled && corrector_present,
+        );
+        self.corrector.setEnabled(corrector_present);
         set_checked(&self.enabled, config.predict.enabled);
         let cloud = config.predict.enabled;
         self.slots.setEnabled(cloud);

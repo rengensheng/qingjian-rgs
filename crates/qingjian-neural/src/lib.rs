@@ -8,6 +8,7 @@
 
 mod config;
 mod core_scorer;
+pub mod corrector;
 mod error;
 mod model;
 pub mod qjm;
@@ -15,6 +16,7 @@ mod scorer;
 mod vocab;
 
 pub use config::ModelConfig;
+pub use corrector::{CorrectorConfig, NeuralCorrector, find_corrector};
 pub use error::NeuralError;
 pub use model::CharLm;
 pub use qjm::find_model;

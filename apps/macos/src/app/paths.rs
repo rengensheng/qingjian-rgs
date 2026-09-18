@@ -58,3 +58,13 @@ pub fn model_path() -> Option<PathBuf> {
     }
     qingjian_neural::find_model(&resources_dir().ok()?.join("model"))
 }
+
+/// 神经拼音纠错模型（`config.json` + `model.safetensors` 的导出目录，`tools/corrector/export.py` 导出）：
+/// 用户目录 `corrector/` 里有就用它（自己训的），否则用包里的 `Resources/corrector/`；都没有是 `None`。
+pub fn corrector_path() -> Option<PathBuf> {
+    let user = user_data_dir()?.join("corrector");
+    if let Some(found) = qingjian_neural::find_corrector(&user) {
+        return Some(found);
+    }
+    qingjian_neural::find_corrector(&resources_dir().ok()?.join("corrector"))
+}

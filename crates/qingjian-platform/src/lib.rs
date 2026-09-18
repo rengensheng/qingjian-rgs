@@ -10,9 +10,10 @@ pub mod protocol;
 pub mod resources;
 
 pub use config::{
-    AppsConfig, CandidateRenderer, Config, DEFAULT_DOMAINS, DEFAULT_ENGLISH_CANDIDATES_OFF,
-    DEFAULT_ENGLISH_CANDIDATES_OFF_MACOS, DEFAULT_ENGLISH_CANDIDATES_OFF_WINDOWS,
-    DEFAULT_PAGE_KEYS, DictionariesConfig, GeneralConfig, KeyCombo, LayoutMode, LocalModelConfig,
-    LogLevel, MAX_PAGE_SIZE, Modifiers, PAGE_KEY_OPTIONS, PreeditMode, ShortcutConfig, ThemeMode,
+    AppsConfig, CandidateRenderer, Config, CorrectionConfig, DEFAULT_DOMAINS,
+    DEFAULT_ENGLISH_CANDIDATES_OFF, DEFAULT_ENGLISH_CANDIDATES_OFF_MACOS,
+    DEFAULT_ENGLISH_CANDIDATES_OFF_WINDOWS, DEFAULT_PAGE_KEYS, DictionariesConfig, GeneralConfig,
+    KeyCombo, LayoutMode, LocalModelConfig, LogLevel, MAX_PAGE_SIZE, Modifiers, PAGE_KEY_OPTIONS,
+    PreeditMode, ShortcutConfig, ThemeMode,
 };
 pub use error::ConfigError;

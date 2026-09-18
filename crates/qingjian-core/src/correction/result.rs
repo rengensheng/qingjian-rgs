@@ -23,12 +23,14 @@ impl Correction {
     /// 这处编辑落在纠正后哪个音节里：返回 (敲的那段字母, 纠正后的音节)，给个人敲错表记（敲的那段多半不是合法音节）；
     /// 多敲的字母算在它前面那个音节上（与 [`Edit::to_original`] 一致）。编辑处不在任何音节里时返回 `None`。
     /// `consumed` 是上屏消耗掉的纠正后字母数：没吃到编辑处的上屏不算接受了纠正。
+    /// 神经纠正（多处编辑）对不到单个音节，一律返回 `None`：选择学习照记，敲错表不记。
     pub fn typo_pair(&self, consumed: usize) -> Option<(String, String)> {
         let at = match self.edit {
             Edit::Substitute { index, .. }
             | Edit::Insert { index }
             | Edit::Transpose { index, .. } => index,
             Edit::Delete { index, .. } => index.saturating_sub(1),
+            Edit::Neural => return None,
         };
         if at >= consumed {
             return None;

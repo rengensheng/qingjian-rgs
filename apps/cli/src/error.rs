@@ -32,6 +32,10 @@ pub enum CliError {
     #[error(transparent)]
     LanguageModel(#[from] LmError),
 
+    /// `--corrector-serve` 没给 `--neural-corrector`。
+    #[error("--corrector-serve 需要 --neural-corrector <导出目录>")]
+    MissingCorrector,
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

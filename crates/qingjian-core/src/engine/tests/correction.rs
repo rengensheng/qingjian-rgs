@@ -215,6 +215,142 @@ fn spelling_correction_fixes_one_edit_and_learns_from_enter() {
     assert!(engine.query().unwrap().correction.is_none());
 }
 
+/// 神经纠错兜底：两处错拼（`kbifbng`）规则够不着时，模型的提名走同样的噪声信道验证后生效；
+/// 模型胡说、原样更说得通时不纠；同一作用域只问模型一次。
+#[test]
+fn neural_corrector_covers_multi_error_pinyin() {
+    use crate::correction::PinyinCorrector;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Stub {
+        table: HashMap<String, String>,
+        calls: std::sync::Arc<AtomicUsize>,
+    }
+
+    impl PinyinCorrector for Stub {
+        fn correct(&self, input: &str) -> Vec<String> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.table.get(input).cloned().into_iter().collect()
+        }
+    }
+
+    fn engine_with(table: &[(&str, &str)], calls: &std::sync::Arc<AtomicUsize>) -> Engine {
+        let mut engine = Engine::new(Dictionary::parse(SAMPLE).unwrap())
+            .with_learner(Box::new(CountingLearner(HashMap::new())));
+        engine.set_neural_corrector(Some(Box::new(Stub {
+            table: table
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            calls: calls.clone(),
+        })));
+        assert!(engine.has_neural_corrector());
+        engine
+    }
+
+    // 没挂模型时两处错拼无解：规则的一处编辑够不着
+    let mut plain = Engine::new(Dictionary::parse(SAMPLE).unwrap());
+    plain.set_input("kbifbng");
+    assert!(plain.query().unwrap().correction.is_none());
+
+    // 挂了模型：提名走噪声信道验证后生效，候选来自纠正后的拼音
+    let calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let mut engine = engine_with(&[("kbifbng", "kaifang"), ("kaifa", "kafei")], &calls);
+    engine.set_input("kbifbng");
+    let query = engine.query().unwrap();
+    let correction = query.correction.clone().expect("neural corrected");
+    assert_eq!(correction.corrected, "kaifang");
+    assert!(matches!(correction.edit, crate::correction::Edit::Neural));
+    assert_eq!(query.candidates.items[0].text, "开放");
+    // 上屏吃掉整段原串并按原输入串记选择；commit 复用缓存，不再问模型
+    let first = query.candidates.items[0].clone();
+    assert_eq!(engine.commit(&first), "开放");
+    assert!(engine.composition().is_empty());
+    assert_eq!(engine.learner().choice_weight("kbifbng", "开放"), 1);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    // 原样说得通时神经提名也赢不了：kaifa 按 kai fa 读出开发，kafei 扣掉代价翻不过它
+    engine.set_input("kaifa");
+    assert!(engine.query().unwrap().correction.is_none());
+
+    // 模型胡说（切不干净）时当没说
+    let garbage_calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let mut engine = engine_with(&[("kbifbng", "zzzzzz")], &garbage_calls);
+    engine.set_input("kbifbng");
+    assert!(engine.query().unwrap().correction.is_none());
+}
+
+/// 异步神经纠错：查询不等模型，只记下作用域；壳停稳后送去后台，提名到了重查一次才生效。
+/// 同一作用域只问一次，模型说不用改（空提名）也记下来，不会下次重查又问。
+#[test]
+fn async_neural_correction_waits_for_stillness() {
+    use crate::correction::PinyinCorrector;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    struct Stub {
+        table: HashMap<String, String>,
+        calls: std::sync::Arc<AtomicUsize>,
+    }
+
+    impl PinyinCorrector for Stub {
+        fn correct(&self, input: &str) -> Vec<String> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            // 空提名表示模型认为不用改
+            if input == "kaifan" {
+                return Vec::new();
+            }
+            self.table.get(input).cloned().into_iter().collect()
+        }
+    }
+
+    let calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let mut engine = Engine::new(Dictionary::parse(SAMPLE).unwrap())
+        .with_learner(Box::new(CountingLearner(HashMap::new())));
+    engine.set_async_neural_corrector(Some(Box::new(Stub {
+        table: HashMap::from([("kbifbng".to_owned(), "kaifang".to_owned())]),
+        calls: calls.clone(),
+    })));
+    assert!(engine.has_neural_corrector());
+
+    // 查询当场不等模型：无纠正，但记下了作用域
+    engine.set_input("kbifbng");
+    assert!(engine.query().unwrap().correction.is_none());
+    assert!(engine.correction_pending());
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    // 停稳后送去后台，提名到了重查：纠正生效，候选来自纠正后的拼音
+    assert!(engine.request_correction());
+    assert!(!engine.correction_pending());
+    let start = Instant::now();
+    while !engine.poll_correction() {
+        assert!(start.elapsed() < Duration::from_secs(5), "后台提名没回来");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let query = engine.query().unwrap();
+    let correction = query.correction.clone().expect("neural corrected");
+    assert_eq!(correction.corrected, "kaifang");
+    assert!(matches!(correction.edit, crate::correction::Edit::Neural));
+    assert_eq!(query.candidates.items[0].text, "开放");
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    // 同一作用域不再问：缓存命中，也不记新的等待
+    assert!(engine.query().unwrap().correction.is_some());
+    assert!(!engine.correction_pending());
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    // 空提名也记下来：重查不再问，后台不再跑
+    engine.set_input("kaifan");
+    assert!(engine.query().unwrap().correction.is_none());
+    assert!(engine.request_correction());
+    let start = Instant::now();
+    while !engine.poll_correction() {
+        assert!(start.elapsed() < Duration::from_secs(5), "后台提名没回来");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(engine.query().unwrap().correction.is_none());
+    assert!(!engine.correction_pending());
+}
 /// 跨音节的相邻换位（`niaho` → `nihao`）：换位后切分照样成立，拼音看着合法，
 /// 音节级敲错边按敲错的切分展开够不着，整段换位纠正；敲对的原样不误纠。
 #[test]

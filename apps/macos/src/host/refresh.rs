@@ -19,6 +19,7 @@ pub fn refresh(client: TextClient<'_>) {
     // 读应用文本要等应用回话，放在借 Host 之外（见 request_prediction）
     let wants_context = with(|h| {
         h.attach_loaded_model();
+        h.attach_loaded_corrector();
         h.engine.has_sentence_scorer() && h.engine.composition().text().chars().count() == 1
     })
     .unwrap_or(false);
@@ -52,6 +53,7 @@ pub fn refresh(client: TextClient<'_>) {
             .unwrap_or_default();
         h.reset_session(preedit, candidates);
         h.schedule_rescoring();
+        h.schedule_correction();
         (marked, cursor, h.preedit_mode.inline())
     }) else {
         return;

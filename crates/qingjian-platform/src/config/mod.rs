@@ -1,5 +1,6 @@
 mod apps;
 mod candidate_renderer;
+mod correction;
 mod dictionaries;
 mod general;
 mod key_combo;
@@ -26,6 +27,7 @@ pub use apps::{
     DEFAULT_ENGLISH_CANDIDATES_OFF_WINDOWS,
 };
 pub use candidate_renderer::CandidateRenderer;
+pub use correction::CorrectionConfig;
 pub use dictionaries::{DEFAULT_DOMAINS, DictionariesConfig};
 pub use general::{DEFAULT_PAGE_KEYS, GeneralConfig, MAX_PAGE_SIZE, PAGE_KEY_OPTIONS};
 pub use key_combo::KeyCombo;
@@ -71,6 +73,9 @@ pub struct Config {
 
     /// 本地整句模型。
     pub model: LocalModelConfig,
+
+    /// 神经拼音纠错。
+    pub correction: CorrectionConfig,
 }
 
 fn deserialize_phrases<'de, D: serde::Deserializer<'de>>(
@@ -230,6 +235,10 @@ disabled = []
 
 [model]
 # 本地整句模型：随包的小模型在本机给整句候选重新排序，全程离线；停顿后几十毫秒生效。关掉只用词库统计
+enabled = true
+
+[correction]
+# 神经拼音纠错：错了不止一处、规则修不动的拼音问本地模型要提名，全程离线；只在规则无果时跑一次，结果按作用域缓存。关掉只用规则纠错
 enabled = true
 
 [predict]

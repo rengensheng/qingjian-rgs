@@ -46,8 +46,13 @@ pub fn show(engine: &mut Engine, input: &str, limit: usize) -> Option<Query> {
         );
     }
     if let Some(correction) = &query.correction {
+        // 神经兜底命中的纠正标出来源，否则规则与神经的纠正在这里混在一起，看不出模型有没有干活
+        let source = match correction.edit {
+            qingjian_core::correction::Edit::Neural => "（神经）",
+            _ => "",
+        };
         println!(
-            "  纠正: {} → {}",
+            "  纠正{source}: {} → {}",
             correction.original, correction.segmentation
         );
     }

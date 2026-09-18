@@ -11,6 +11,7 @@ mod logging;
 mod repl;
 mod replay;
 mod rescoring;
+mod serve;
 mod tuning;
 
 use std::time::Instant;
@@ -39,6 +40,10 @@ fn run() -> Result<(), CliError> {
     let args = Args::parse();
     let _log_guard = logging::init()?;
 
+    // 服务模式只加载纠错模型，不组装 Engine（不要词库与语言模型）
+    if args.corrector_serve {
+        return serve::run(&args);
+    }
     let started = Instant::now();
     let mut engine = build_engine(&args)?;
     tracing::info!(total_ms = started.elapsed().as_millis(), "Engine 就绪");
@@ -208,6 +213,15 @@ fn build_engine(args: &Args) -> Result<Engine, CliError> {
                 args.neural_context,
             )
         };
+    }
+    if let Some(dir) = &args.neural_corrector {
+        let started = Instant::now();
+        let corrector = qingjian_neural::corrector::NeuralCorrector::load(dir)?;
+        tracing::info!(
+            load_ms = started.elapsed().as_millis(),
+            "神经拼音纠错已启用"
+        );
+        engine.set_neural_corrector(Some(Box::new(corrector)));
     }
     let config_path = args
         .config

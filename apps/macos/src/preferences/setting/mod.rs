@@ -56,6 +56,9 @@ pub enum Setting {
     /// `[model] enabled`。
     LocalModelEnabled,
 
+    /// `[correction] enabled`。
+    CorrectorEnabled,
+
     /// 默认中文标点模式。
     FullWidthPunctuation,
 
@@ -195,6 +198,7 @@ impl Setting {
             Self::OpenWebsite => 30,
             Self::OpenRepository => 31,
             Self::LocalModelEnabled => 32,
+            Self::CorrectorEnabled => 42,
             Self::FullWidthPunctuation => 33,
             Self::SelectPhrase => 34,
             Self::PhraseDraft => 35,
@@ -248,6 +252,7 @@ impl Setting {
             30 => Self::OpenWebsite,
             31 => Self::OpenRepository,
             32 => Self::LocalModelEnabled,
+            42 => Self::CorrectorEnabled,
             33 => Self::FullWidthPunctuation,
             34 => Self::SelectPhrase,
             35 => Self::PhraseDraft,
@@ -289,6 +294,7 @@ mod tests {
             Setting::QuestionKey,
             Setting::CloudEnabled,
             Setting::LocalModelEnabled,
+            Setting::CorrectorEnabled,
             Setting::BaseUrl,
             Setting::Model,
             Setting::ApiKey,

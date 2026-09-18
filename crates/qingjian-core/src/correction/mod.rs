@@ -7,16 +7,24 @@
 //!
 //! 另一路是音节级的敲错变体（[`typo`]）：每个完整音节一处编辑后仍合法的写法进词图当带代价的边，
 //! 由整句转换与词级排序按噪声信道挑；用户接受过的 (敲的, 要的) 音节对记进个人敲错表（Learner），以后那条边更便宜。各项代价与折扣上限收在 [`TypoCosts`] 里。
+//!
+//! 第三路是神经纠错（[`PinyinCorrector`]）：规则纠错无果（两处以上错拼）时才问挂上的模型，
+//! 提名的串同样走噪声信道验证；没挂模型时这条路不存在。
+//! 同步调用（CLI）当场问，异步（壳里，后台线程，见 [`worker`]）先记下作用域、停稳后才问。
 
+mod corrector;
 mod costs;
 mod edit;
 mod result;
 pub mod typo;
+mod worker;
 
+pub use corrector::PinyinCorrector;
 pub use costs::TypoCosts;
 pub use edit::{Edit, variants};
 pub use result::Correction;
 pub use typo::TypoKind;
+pub(crate) use worker::CorrectionWorker;
 
 use crate::parser::{self, Segmentation};
 

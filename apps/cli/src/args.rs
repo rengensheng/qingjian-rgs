@@ -97,6 +97,16 @@ pub struct Args {
     #[arg(long)]
     pub neural_async: bool,
 
+    /// 神经拼音纠错：字符级 Transformer 的导出目录（config.json / model.safetensors，`tools/corrector/export.py` 导出），
+    /// 规则纠错无果（两处以上错拼）时用它兜底，提名仍走噪声信道验证
+    #[arg(long)]
+    pub neural_corrector: Option<PathBuf>,
+
+    /// 纠错服务模式：只加载神经纠错模型常驻后台，stdin 一行一个拼音、stdout 一行一个纠正结果（没有为空行）；
+    /// 配合 nohup 放后台，Python 用 subprocess 管道驱动，免去每次加载权重的开销（用法见 `serve.rs` 头注释）
+    #[arg(long)]
+    pub corrector_serve: bool,
+
     /// 逐键模式：把每个输入当作一键一键敲进去，每个前缀都查一次，打印每键各阶段耗时（性能测试用）
     #[arg(long)]
     pub typing: bool,

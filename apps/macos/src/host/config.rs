@@ -75,6 +75,14 @@ impl Host {
             }
             self.applied_model = Some(config.model.clone());
         }
+        if self.applied_correction.as_ref() != Some(&config.correction) {
+            if config.correction.enabled {
+                self.load_corrector();
+            } else {
+                self.unload_corrector();
+            }
+            self.applied_correction = Some(config.correction.clone());
+        }
         let cloud_active = self.engine.prediction_enabled();
         self.indicator.set_cloud(cloud_active);
         self.indicator.update(self.english);

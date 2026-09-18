@@ -102,6 +102,15 @@ if [[ -f data/generated/dict.tsv || -f data/generated/dict.qj ]]; then
     chmod 644 "$APP/Contents/Resources/model/model.qjm"
     echo "打包本地整句模型：$model_dir/model.qjm"
   fi
+  # 神经拼音纠错模型（字符级 Transformer）：tools/corrector/export.py 从 corrector.pt 导出两件套到 data/corrector/，
+  # 随包原样放 Resources/corrector/；什么都没有就只用规则纠错
+  corrector_dir="${QINGJIAN_CORRECTOR_DIR:-data/corrector}"
+  if [[ -f "$corrector_dir/model.safetensors" && -f "$corrector_dir/config.json" ]]; then
+    mkdir -p "$APP/Contents/Resources/corrector"
+    cp "$corrector_dir/config.json" "$corrector_dir/model.safetensors" "$APP/Contents/Resources/corrector/"
+    chmod 644 "$APP/Contents/Resources/corrector/"*
+    echo "打包神经拼音纠错模型：$corrector_dir"
+  fi
   # 释义表打成 .qj（TSV 比 .qj 新时重打），英文词表仍是 TSV
   for lang in en ja zh; do
     src="assets/glossary/glossary-$lang.tsv"

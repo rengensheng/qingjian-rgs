@@ -230,6 +230,7 @@ impl PreferencesWindow {
             config,
             key_present,
             crate::app::paths::model_path().is_some(),
+            crate::app::paths::corrector_path().is_some(),
         );
         self.advanced.sync(config);
         let status = error

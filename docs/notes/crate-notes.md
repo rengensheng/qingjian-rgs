@@ -12,7 +12,7 @@ TSV 解析、查询与生成工具把 `lue` / `nue` 统一成 `lve` / `nve`。
 
 ## crates/qingjian-core
 
-模块：`composition` / `parser` / `correction`（拼写纠错：整段一处编辑的候选纠正（不像话的试全部编辑，看似合法的也试相邻换位，跨音节换位也纠） + `typo` 音节级敲错变体表，后者进整句词图当带代价的边）/
+模块：`composition` / `parser` / `correction`（拼写纠错：整段一处编辑的候选纠正（不像话的试全部编辑，看似合法的也试相邻换位，跨音节换位也纠） + `typo` 音节级敲错变体表，后者进整句词图当带代价的边 + 神经兜底（`PinyinCorrector` trait：规则无果、错了不止一处时才问挂上的模型，提名同样走噪声信道验证，按原价扣一次编辑代价；赢了记 `Edit::Neural`，消耗换算恒等、不画删除线、不记个人敲错表，选择学习照记；结果进 `correction_cache`，同一作用域只问一次；同步调用（CLI）当场问，异步（壳里）查询只记作用域，停稳后 `correction_pending` / `request_correction` / `poll_correction` 走后台线程（`correction::CorrectionWorker`，排队只算最新），提名到重查一次，空提名也记下来免得重问）/
 `candidate` / `ranking` / `shortcut` / `sentence` / `fuzzy` / `shuangpin`（双拼：四套方案键位表、键 → 全拼解码与消耗换算；裸鼻音 `ng` / `hm` / `hng` 无标准键位，嗯走 `en` / `eng`、哼走 `heng`）/ `zhuyin`（大千注音：键 → 注音符号 → 拼音，`[general] zhuyin` 开关，声调只判音节完整不进查询）/ `emoji` /
 `english`（英文模式候选）/ `engine`（`query::EnglishTail`：句末英文词并入整句，`woxiangxuehaorust` → 我想学好rust，尾段也像拼音时按分数与拼音读法比）。
 `parser::SYLLABLES` 含鼻音叹词 `ng` / `hm` / `hng`（嗯、哼），裸的 `m` / `n` 不收（它们同时是声母，收了会把单键从前缀简拼变成精确匹配）。
@@ -71,6 +71,17 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 异步的（`with_async_sentence_scorer`，后台线程 `RescoreWorker`）查询不等模型：缺分的记下来，壳停键后 `request_rescoring`、`poll_rescoring` 到了再 `query` 一次。
 前文优先用壳给的应用光标前文（`set_rescoring_context`），没有用本会话最近 64 个上屏字符。CLI `--neural <导出目录>`（`--neural-weight` / `--neural-context` / `--neural-async`）。
 
+`corrector`，拼音纠错模型的本地推理（`NeuralCorrector`，Core `correction::PinyinCorrector` trait 的实现）：字符级 Transformer
+encoder-decoder（与训练侧 `PinyinCorrector` 同构：pre-LN、ReLU 前馈、正弦位置编码现算，权重名沿用 torch 层名），贪心解码，
+只出一个最可能的串。字表写死 30（PAD / BOS / EOS / UNK + a-z，见 `codec`），结构配置 `CorrectorConfig` 与权重
+`model.safetensors` 放导出目录（`NeuralCorrector::load(目录)`，只认显式路径，不嗅探）。导出：`uv run tools/corrector/export.py
+<corrector.pt> -o data/corrector`（权重名原样转存 + 写 `config.json`）；对拍：训练侧 `infer.py` 与
+`cargo run -p qingjian-cli -- --neural-corrector data/corrector <错拼>` 应给出同一纠正。Engine 侧经
+`with_neural_corrector` / `set_neural_corrector` 挂上（CLI `--neural-corrector`），只在规则纠错无果时问一次；
+冒烟 `QINGJIAN_CORRECTOR_DIR=data/corrector cargo test -p qingjian-neural corrector`，延迟探针
+`cargo test --release -p qingjian-neural -- --ignored --nocapture`（现测：加载约 170ms，单次纠错约 30ms；
+壳里走异步：查询不等模型，停 1 秒才问一次）。
+
 ## crates/qingjian-lm
 
 `BigramModel`，Core `sentence::LanguageModel` trait 的实现，从 `data/generated/lm.qj`（或 `lm-unigram.tsv` / `lm-bigram.tsv`）加载
@@ -81,7 +92,7 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 ## crates/qingjian-platform
 
 `Config`（TOML 配置文件，`[general]` / `[shortcut]` / `[fuzzy]` / `[dictionaries]` / `[apps]` / `[predict]` 分节，首次运行写模板，
-`set_value` 用 toml_edit 原地改键保留注释；`[model] enabled` 本地整句模型开关，`LocalModelConfig`）；`extra_dictionaries` 列出 / 加载随包领域词库与用户 `dicts/`
+`set_value` 用 toml_edit 原地改键保留注释；`[model] enabled` 本地整句模型开关（`LocalModelConfig`）、`[correction] enabled` 神经拼音纠错开关（`CorrectionConfig`））；`extra_dictionaries` 列出 / 加载随包领域词库与用户 `dicts/`
 （mac 壳与 Windows Server 共用，同名 `.qj` 优先于 `.tsv`）；`protocol` 模块是 Windows Server ↔ TSF DLL 的 IPC 协议类型
 （`ClientMessage` / `ServerMessage` / `Frame` / `PreeditSegment`，全 serde，两端共用，见 `docs/design/architecture.md`「Windows：TSF」）。
 
@@ -105,6 +116,8 @@ Engine 侧在 `engine/rescoring/`：接了打分器就取 Viterbi 前 `RESCORE_P
 - `--eval-text <文本>...` 整句评测：把用户自己写的中文文本按标点切句、按词库读音转成全拼，冷启动喂给引擎看整句能不能还原原句
   （首选命中率 / 字准确率 / 查询耗时；不依赖日志里当时选了什么，给整句排序与语言模型的改动当尺子），`--eval-save` 冻结成 `句子\t拼音\t上文` 三列文件，
   之后直接 `--eval-text` 它保证比的是同一份句子（本机的在 `data/eval/sentences.tsv`）。排序、整句、纠错的改动先跑它们再合。
+- `--neural-corrector <导出目录>` 神经拼音纠错：在规则纠错无果时问字符级 Transformer 要提名（见 `qingjian-neural::corrector`），提名仍走噪声信道验证。
+- `--corrector-serve` 纠错服务模式：只加载纠错模型常驻后台，stdin 一行一个拼音、stdout 一行一个纠正结果；`nohup` 放后台后 Python 用 subprocess 管道驱动（用法见 `apps/cli/src/serve.rs` 头注释）。
 
 ## apps/macos
 
@@ -126,6 +139,10 @@ IMK 输入法，源码按 `app / host / imk / candidates / menubar / preferences
 - 本地整句模型：`bundle.sh` 把 `data/model/`（或 `QINGJIAN_MODEL_DIR`）三件套打进 `Resources/model/`，用户目录 `model/` 优先；`host/model.rs` 在后台线程加载并预热（首次 Metal 编译）后
   `set_async_sentence_scorer` 接上，`refresh` 每键先读应用光标前 64 字给 Engine 当前文、查询后 `schedule_rescoring`，`RescoreMonitor` 停键 80 ms 请求、20 ms 轮询，
   结果到了重查一次只重画当前页（翻过页 / 动过高亮不动）；「云服务」页有开关（`[model] enabled`）。
+- 神经拼音纠错：与整句模型同路，后台线程加载 `data/corrector/`（`QINGJIAN_CORRECTOR_DIR`，`tools/corrector/export.py` 导出的两件套）打进
+  `Resources/corrector/`，用户目录 `corrector/` 优先；`host/corrector.rs` 加载预热后以异步 worker 接上（`set_async_neural_corrector`），
+  查询当场不等模型（只记作用域），`CorrectionMonitor` 停 1 秒防抖后送后台、20ms 轮询，提名到了重查一次只重画当前页（翻过页 / 动过高亮不动）；
+  「云服务」页有开关（`[correction] enabled`）。release 单次约 30ms，但连着敲时一次都不问。
 - 端到端验证可用 `osascript` 的 System Events 往 TextEdit 发按键再读回文本（终端需要辅助功能权限；输入法得在中文模式）。
 
 ## apps/windows

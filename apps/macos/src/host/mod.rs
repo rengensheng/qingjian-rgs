@@ -9,6 +9,8 @@ mod cloud;
 mod cloud_test_monitor;
 mod config;
 mod config_watch;
+mod correction_monitor;
+mod corrector;
 mod diagnostics;
 mod dictionaries;
 mod dictionary_info;
@@ -41,9 +43,9 @@ use qingjian_learning::{FrequencyLearner, InputLog, UsageStats, VocabularyBook};
 use qingjian_lm::BigramModel;
 use qingjian_platform::extra_dictionaries;
 use qingjian_platform::{
-    AppsConfig, CandidateRenderer, DEFAULT_ENGLISH_CANDIDATES_OFF, DictionariesConfig, KeyCombo,
-    LayoutMode, LocalModelConfig, LogLevel, Modifiers, PAGE_KEY_OPTIONS, PreeditMode,
-    ShortcutConfig, ThemeMode,
+    AppsConfig, CandidateRenderer, CorrectionConfig, DEFAULT_ENGLISH_CANDIDATES_OFF,
+    DictionariesConfig, KeyCombo, LayoutMode, LocalModelConfig, LogLevel, Modifiers,
+    PAGE_KEY_OPTIONS, PreeditMode, ShortcutConfig, ThemeMode,
 };
 use qingjian_predict::{
     CloudGlossFiller, CloudPredictor, ConnectionTest, PredictConfig, PredictError,
@@ -59,6 +61,7 @@ use crate::preferences::{PreferencesWindow, Setting, SettingValue};
 
 use cloud_test_monitor::CloudTestMonitor;
 use config_watch::ConfigWatch;
+use correction_monitor::CorrectionMonitor;
 pub use dictionary_info::DictionaryInfo;
 pub use init::init;
 use predict_monitor::PredictMonitor;
@@ -182,6 +185,19 @@ pub struct Host {
 
     /// 上次套用的 `[model]`，变了才重载 / 卸载。
     applied_model: Option<LocalModelConfig>,
+
+    /// 正在后台加载的纠错模型；加载完接到 Engine 上就清掉。
+    corrector_loader: Option<
+        std::sync::mpsc::Receiver<
+            Result<qingjian_neural::NeuralCorrector, qingjian_neural::NeuralError>,
+        >,
+    >,
+
+    /// 上次套用的 `[correction]`，变了才重载 / 卸载。
+    applied_correction: Option<CorrectionConfig>,
+
+    /// 神经纠错的防抖与轮询定时器。
+    correction: CorrectionMonitor,
 
     /// 当前会话的候选、高亮、页码、preedit。
     pub session: Session,

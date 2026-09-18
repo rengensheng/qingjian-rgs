@@ -16,6 +16,10 @@ pub enum Edit {
         first: char,
         second: char,
     },
+
+    /// 神经模型给的纠正：错了不止一处，落不到上面任何一种；消耗换算恒等，拼音行不画删除线，
+    /// 个人敲错表不记（见 [`Correction::typo_pair`](super::Correction::typo_pair)）。
+    Neural,
 }
 
 impl Edit {
@@ -23,7 +27,7 @@ impl Edit {
     /// 消耗掉的原串长度要按这处编辑换算回去。
     pub fn to_original(&self, corrected_len: usize) -> usize {
         match *self {
-            Self::Substitute { .. } | Self::Transpose { .. } => corrected_len,
+            Self::Substitute { .. } | Self::Transpose { .. } | Self::Neural => corrected_len,
             // 多敲的字母紧贴在消耗掉的部分后面时一并吃掉，别把它留给下一段
             Self::Delete { index, .. } if index <= corrected_len => corrected_len + 1,
             Self::Delete { .. } => corrected_len,
@@ -32,12 +36,12 @@ impl Edit {
         }
     }
 
-    /// 要画删除线的原字母及其在纠正后串里的位置（画在这一位之前）；漏字没有可划的。
+    /// 要画删除线的原字母及其在纠正后串里的位置（画在这一位之前）；漏字与神经纠正没有可划的。
     pub fn struck(&self) -> Option<(usize, String)> {
         match *self {
             Self::Substitute { index, from } => Some((index, from.to_string())),
             Self::Delete { index, removed } => Some((index, removed.to_string())),
-            Self::Insert { .. } => None,
+            Self::Insert { .. } | Self::Neural => None,
             Self::Transpose {
                 index,
                 first,

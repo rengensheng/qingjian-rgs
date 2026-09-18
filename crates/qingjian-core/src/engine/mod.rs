@@ -143,6 +143,19 @@ pub struct Engine {
     /// 个人 n-gram 与静态模型插值的参数；只有回放调参会改（`set_interpolation`），壳用缺省值。
     interpolation: Interpolation,
 
+    /// 神经拼音纠错模型（字符级 Transformer）：规则纠错无果时才问它要提名；没挂就是 `None`。
+    /// 同步调用（CLI），壳里用下面的异步 worker。
+    neural_corrector: Option<Box<dyn correction::PinyinCorrector>>,
+
+    /// 神经纠错的异步 worker（壳里用）：模型在后台线程，停稳后才问，见 [`Self::request_correction`]。
+    correction_worker: Option<correction::CorrectionWorker>,
+
+    /// 等后台给提名的作用域（规则无果时记下）；[`Self::request_correction`] 取走送去后台。
+    correction_wanted: std::cell::RefCell<Option<String>>,
+
+    /// 后台给好的提名（作用域，提名串）：按作用域验证后才生效，旧的丢掉，只留最近几条。
+    correction_ready: std::cell::RefCell<Vec<(String, Vec<String>)>>,
+
     /// 敲错纠正的代价；同上，只有回放调参会改（`set_typo_costs`）。
     typo_costs: TypoCosts,
 
@@ -202,6 +215,7 @@ pub struct Engine {
     last_query: std::cell::RefCell<Option<query::QuerySnapshot>>,
 
     /// 上一次算过的拼写纠正：(作用域, 结果)。query 算一次，commit / take_raw 复用，别再跑一遍变体枚举。
+    /// 挂了神经纠错时它的提名也记在这里，同一作用域只问模型一次。
     correction_cache: std::cell::RefCell<Option<(String, Option<Correction>)>>,
 
     /// 整句转换的格子候选缓存：跨按键复用，学习数据一变就清（见 [`Self::forget_span_cache`]）。
@@ -330,6 +344,10 @@ impl Engine {
             neural_weight: NEURAL_WEIGHT,
             neural_margin: NEURAL_MARGIN,
             interpolation: Interpolation::DEFAULT,
+            neural_corrector: None,
+            correction_worker: None,
+            correction_wanted: std::cell::RefCell::new(None),
+            correction_ready: std::cell::RefCell::new(Vec::new()),
             typo_costs: TypoCosts::DEFAULT,
             neural_context: RESCORE_CONTEXT_CHARS,
             correction_cache: std::cell::RefCell::new(None),
